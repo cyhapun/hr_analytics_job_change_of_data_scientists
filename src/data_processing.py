@@ -1,296 +1,507 @@
 import numpy as np
-from typing import Dict, List, Tuple
 
-MISSING_TOKENS = {
+MISSING_TOKENS = (
     "",
-    "na", "n/a", "nan", "<na>",
-    "null", "none", "missing", "?",
-}
+    " ",
+    "nan",
+    "NaN",
+    "NA",
+    "N/A",
+    "<NA>",
+    "null",
+    "None",
+    "none",
+    "missing",
+    "?",
+)
 
 
-def load_hr_csv(path: str) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Đọc file CSV HR Analytics thành (header, data_raw).
-
-    - header: mảng 1D các tên cột (dtype=str)
-    - data_raw: mảng 2D (dtype=str), chưa xử lý missing
-    """
-    with open(path, "r", encoding="utf-8") as f:
-        first_line = f.readline().rstrip("\n")
-    header = np.array(first_line.split(","), dtype=str)
-
-    data_raw = np.genfromtxt(
-        path,
-        delimiter=",",
-        dtype=str,
-        encoding="utf-8",
-        skip_header=1,
-    )
-    if data_raw.ndim == 1:
-        data_raw = data_raw.reshape(1, -1)
-    return header, data_raw
-
-
-def normalize_missing_values(data: np.ndarray) -> np.ndarray:
-    """
-    Chuẩn hóa các giá trị missing về chuỗi rỗng ''.
-
-    Input: data dtype=str (đọc từ CSV)
-    Output: bản copy đã thay missing → ''
-    """
-    out = data.astype(str).copy()
-    n_rows, n_cols = out.shape
-
-    for i in range(n_rows):
-        for j in range(n_cols):
-            val = out[i, j]
-            v = val.strip()
-            if v == "" or v.lower() in MISSING_TOKENS:
-                out[i, j] = ""
-    return out
-
-
-def is_missing_str(x: str) -> bool:
-    if not isinstance(x, str):
-        x = str(x)
-    v = x.strip()
-    return (v == "") or (v.lower() in MISSING_TOKENS)
-
-def to_float_array(col: np.ndarray) -> np.ndarray:
-    """
-    Chuyển 1 cột string sang float, giá trị không hợp lệ → np.nan.
-    """
-    out = np.full(col.shape[0], np.nan, dtype=float)
-    for i, v in enumerate(col):
-        if is_missing_str(v):
-            continue
-        try:
-            out[i] = float(v)
-        except ValueError:
-            # giá trị không parse được ⇒ xem như missing
-            continue
-    return out
-
-
-def parse_experience_column(col: np.ndarray) -> np.ndarray:
-    """
-    Encode cột 'experience' dạng text:
-        '<1'  → 0
-        '1'..'20' → số năm tương ứng
-        '>20' → 21
-    Không parse được / missing → np.nan
-    """
-    out = np.full(col.shape[0], np.nan, dtype=float)
-    for i, raw in enumerate(col):
-        if is_missing_str(raw):
-            continue
-        s = raw.strip()
-        if s.startswith("<"):
-            out[i] = 0.0
-        elif s.startswith(">"):
-            out[i] = 21.0
-        else:
-            try:
-                out[i] = float(s)
-            except ValueError:
-                # giá trị lạ → bỏ qua
-                continue
-    return out
-
-
-def parse_last_new_job_column(col: np.ndarray) -> np.ndarray:
-    """
-    Encode cột 'last_new_job':
-        'never' → 0
-        '1','2','3','4' → 1..4
-        '>4' → 5
-    Các giá trị khác / missing → np.nan
-    """
-    mapping = {
-        "never": 0,
-        "1": 1,
-        "2": 2,
-        "3": 3,
-        "4": 4,
-        ">4": 5,
-    }
-    out = np.full(col.shape[0], np.nan, dtype=float)
-    for i, raw in enumerate(col):
-        if is_missing_str(raw):
-            continue
-        key = raw.strip()
-        if key in mapping:
-            out[i] = float(mapping[key])
-    return out
-
-
-def encode_company_size_ordinal(col: np.ndarray) -> np.ndarray:
-    """
-    Encode 'company_size' theo thứ tự tăng dần quy mô.
-    """
-    order = [
-        "<10",
-        "10/49",
-        "50-99",
-        "100-500",
-        "500-999",
-        "1000-4999",
-        "5000-9999",
-        "10000+",
-    ]
-    index = {val: i + 1 for i, val in enumerate(order)}  # 1..8
-    out = np.full(col.shape[0], np.nan, dtype=float)
-    for i, raw in enumerate(col):
-        if is_missing_str(raw):
-            continue
-        key = raw.strip()
-        if key in index:
-            out[i] = float(index[key])
-    return out
-
-def impute_numeric_median(col: np.ndarray) -> Tuple[np.ndarray, float]:
-    """
-    Điền missing cho biến số bằng median.
-    Trả về: (col_đã_điền, median)
-    """
-    x = col.astype(float)
-    mask_valid = ~np.isnan(x)
-    if not np.any(mask_valid):
-        # toàn missing → trả về 0
-        return np.zeros_like(x), 0.0
-    median_val = float(np.median(x[mask_valid]))
-    x[~mask_valid] = median_val
-    return x, median_val
-
-
-def impute_categorical_mode(col: np.ndarray, unknown_token: str = "Unknown") -> Tuple[np.ndarray, str]:
-    """
-    Điền missing cho biến categorical bằng mode.
-    Nếu không có giá trị nào → dùng 'Unknown'.
-    """
-    x = col.astype(str).copy()
-    valid = np.array([v for v in x if not is_missing_str(v)], dtype=str)
-    if valid.size == 0:
-        fill = unknown_token
+def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
+    if has_header:
+        with open(path, "r", encoding=encoding) as f:
+            header_line = f.readline().strip()
+        header = [h.strip() for h in header_line.split(delimiter)]
+        data = np.genfromtxt(
+            path,
+            delimiter=delimiter,
+            dtype=str,
+            autostrip=True,
+            skip_header=1,
+        )
     else:
-        uniq, counts = np.unique(valid, return_counts=True)
-        fill = uniq[np.argmax(counts)]
-    for i, v in enumerate(x):
-        if is_missing_str(v):
-            x[i] = fill
-    return x, fill
+        header = None
+        data = np.genfromtxt(
+            path,
+            delimiter=delimiter,
+            dtype=str,
+            autostrip=True,
+        )
 
-def zscore_scale(col: np.ndarray) -> Tuple[np.ndarray, float, float]:
-    """
-    Z-score: (x - mean) / std.
-    Trả về (col_scaled, mean, std).
-    """
-    x = col.astype(float)
-    mean = float(np.mean(x))
-    std = float(np.std(x))
-    if std == 0.0:
-        return np.zeros_like(x), mean, std
-    return (x - mean) / std, mean, std
+    if data.ndim == 1:
+        data = data.reshape(-1, data.shape[0])
+
+    return header, data.astype(str)
 
 
-def minmax_scale(col: np.ndarray) -> Tuple[np.ndarray, float, float]:
-    """
-    Min-Max: (x - min) / (max - min) trong [0, 1].
-    """
-    x = col.astype(float)
-    mn = float(np.min(x))
-    mx = float(np.max(x))
-    if mx == mn:
-        return np.zeros_like(x), mn, mx
-    return (x - mn) / (mx - mn), mn, mx
+def _normalize_str_array(arr):
+    arr = arr.astype(str)
+    return np.char.strip(np.char.lower(arr))
 
-def one_hot_encode_strings(col: np.ndarray, prefix: str = "") -> Tuple[np.ndarray, List[str]]:
-    """
-    One-hot encode 1 cột string.
-    Trả về:
-        - encoded: shape (n_samples, n_unique)
-        - feature_names: list tên feature sau khi encode
-    """
-    x = col.astype(str)
-    categories = np.unique(x)
-    n = x.shape[0]
-    k = categories.shape[0]
 
-    encoded = np.zeros((n, k), dtype=float)
-    for j, cat in enumerate(categories):
-        encoded[:, j] = (x == cat).astype(float)
+def build_missing_mask(data, extra_tokens=None):
+    tokens = set(MISSING_TOKENS)
+    if extra_tokens is not None:
+        tokens.update(extra_tokens)
 
-    feature_names = [
-        f"{prefix}{cat}" if prefix else str(cat)
-        for cat in categories
-    ]
-    return encoded, feature_names
+    normalized = _normalize_str_array(data)
+    mask = np.zeros_like(normalized, dtype=bool)
+    for tk in tokens:
+        tk_norm = tk.strip().lower()
+        mask |= (normalized == tk_norm)
+    return mask
+
+
+def summarize_missing(data, header=None, extra_tokens=None):
+    miss_mask = build_missing_mask(data, extra_tokens=extra_tokens)
+    counts = miss_mask.sum(axis=0)
+    ratios = counts / data.shape[0]
+
+    if header is not None:
+        print("Missing summary theo column:")
+        for name, c, r in zip(header, counts, ratios):
+            print(f"{name:25s} | {c:6d} missing ({r:6.2%})")
+
+
+def string_column_to_float(col, missing_tokens=MISSING_TOKENS):
+    col = col.astype(str)
+    normalized = _normalize_str_array(col)
+
+    mask_missing = np.zeros_like(normalized, dtype=bool)
+    for tk in missing_tokens:
+        tk_norm = tk.strip().lower()
+        mask_missing |= (normalized == tk_norm)
+
+    tmp = col.copy()
+    tmp[mask_missing] = "nan"
+    return tmp.astype(float)
+
+
+def impute_numeric(col, strategy="constant", missing_tokens=MISSING_TOKENS):
+    x = string_column_to_float(col, missing_tokens=missing_tokens)
+    mask_nan = np.isnan(x)
+
+    if strategy == "mean":
+        fill_value = np.nanmean(x)
+    elif strategy == "median":
+        fill_value = np.nanmedian(x)
+    elif strategy == "constant":
+        fill_value = 0.0
+    else:
+        raise ValueError("strategy must be 'mean', 'median' or 'constant'")
+
+    x[mask_nan] = fill_value
+    return x, float(fill_value)
+
+
+def impute_categorical(col, strategy="mode", constant_value="Unknown",
+                       missing_tokens=MISSING_TOKENS):
+    col = col.astype(str)
+    normalized = _normalize_str_array(col)
+
+    mask_missing = np.zeros_like(normalized, dtype=bool)
+    for tk in missing_tokens:
+        tk_norm = tk.strip().lower()
+        mask_missing |= (normalized == tk_norm)
+
+    if np.all(mask_missing):
+        fill = constant_value
+    else:
+        if strategy == "mode":
+            valid = col[~mask_missing]
+            values, counts = np.unique(valid, return_counts=True)
+            fill = values[np.argmax(counts)]
+        elif strategy == "constant":
+            fill = constant_value
+        else:
+            raise ValueError("strategy must be 'mode' hoặc 'constant'")
+
+    col_filled = col.copy()
+    col_filled[mask_missing] = fill
+    return col_filled, fill
+
+
+def knn_impute_categorical(target_col, feature_matrix, k=5,
+                           missing_tokens=MISSING_TOKENS):
+    target_col = target_col.astype(str)
+    norm = _normalize_str_array(target_col)
+
+    miss_mask = np.zeros_like(norm, dtype=bool)
+    for tk in missing_tokens:
+        miss_mask |= (norm == tk.strip().lower())
+
+    if not np.any(miss_mask):
+        return target_col.copy()
+
+    X = np.asarray(feature_matrix, dtype=float)
+    mean = X.mean(axis=0, keepdims=True)
+    std = X.std(axis=0, keepdims=True)
+    std[std == 0] = 1.0
+    X_std = (X - mean) / std
+
+    col_filled = target_col.copy()
+    idx_missing = np.where(miss_mask)[0]
+
+    for idx in idx_missing:
+        diff = X_std - X_std[idx]
+        dist = np.sum(diff * diff, axis=1)
+        dist[idx] = np.inf
+
+        neighbor_idx = np.argpartition(dist, k)[:k]
+        neighbor_vals = target_col[neighbor_idx]
+
+        valid_neighbors = neighbor_vals[
+            _normalize_str_array(neighbor_vals) != ""
+        ]
+
+        if valid_neighbors.size == 0:
+            col_filled[idx] = "Unknown"
+        else:
+            vals, counts = np.unique(valid_neighbors, return_counts=True)
+            col_filled[idx] = vals[np.argmax(counts)]
+
+    return col_filled
+
+
+def kmeans_impute_city_training(
+    data,
+    col_idx_city,
+    col_idx_train,
+    k=3,
+    max_iter=50,
+    tol=1e-4,
+    random_state=23120329,
+):
+    rng = np.random.default_rng(random_state)
+
+    city = string_column_to_float(data[:, col_idx_city])
+    train = string_column_to_float(data[:, col_idx_train])
+    n = city.shape[0]
+
+    X = np.stack([city, train], axis=1)
+
+    mask_city_nan = np.isnan(city)
+    mask_train_nan = np.isnan(train)
+    mask_any_nan = mask_city_nan | mask_train_nan
+    mask_full = ~mask_any_nan
+
+    if mask_full.sum() < max(k, 3):
+        city_imp, _ = impute_numeric(data[:, col_idx_city], strategy="constant")
+        train_imp, _ = impute_numeric(data[:, col_idx_train], strategy="constant")
+        mean_city = float(np.mean(city_imp))
+        mean_train = float(np.mean(train_imp))
+        centroids = np.array([[mean_city, mean_train]])
+        return city_imp, train_imp, centroids
+
+    X_full = X[mask_full]
+    m = X_full.shape[0]
+
+    if k > m:
+        k = m
+    init_idx = rng.choice(m, size=k, replace=False)
+    centroids = X_full[init_idx].copy()
+
+    for _ in range(max_iter):
+        diff = X_full[:, None, :] - centroids[None, :, :]
+        dists = np.sum(diff * diff, axis=2)
+        labels = np.argmin(dists, axis=1)
+
+        new_centroids = centroids.copy()
+        for j in range(k):
+            members = X_full[labels == j]
+            if members.shape[0] > 0:
+                new_centroids[j] = members.mean(axis=0)
+            else:
+                ridx = rng.integers(0, m)
+                new_centroids[j] = X_full[ridx]
+
+        shift = np.sqrt(np.sum((new_centroids - centroids) ** 2))
+        centroids = new_centroids
+        if shift < tol:
+            break
+
+    counts = np.bincount(labels, minlength=k)
+    major_cluster = int(np.argmax(counts))
+
+    city_filled = city.copy()
+    training_filled = train.copy()
+
+    for i in range(n):
+        c_nan = mask_city_nan[i]
+        t_nan = mask_train_nan[i]
+
+        if not c_nan and not t_nan:
+            continue
+
+        if c_nan and t_nan:
+            cluster = major_cluster
+            city_filled[i] = centroids[cluster, 0]
+            training_filled[i] = centroids[cluster, 1]
+        else:
+            if c_nan and not t_nan:
+                known_val = training_filled[i]
+                d1 = (centroids[:, 1] - known_val) ** 2
+                cluster = int(np.argmin(d1))
+                city_filled[i] = centroids[cluster, 0]
+            elif t_nan and not c_nan:
+                known_val = city_filled[i]
+                d0 = (centroids[:, 0] - known_val) ** 2
+                cluster = int(np.argmin(d0))
+                training_filled[i] = centroids[cluster, 1]
+
+    return city_filled, training_filled, centroids
+
+
+def iqr_bounds(x, whisker=1.5):
+    x = np.asarray(x, dtype=float)
+    q1 = np.percentile(x, 25)
+    q3 = np.percentile(x, 75)
+    iqr = q3 - q1
+    lower = q1 - whisker * iqr
+    upper = q3 + whisker * iqr
+    return lower, upper
+
+
+def detect_outliers_iqr(x, whisker=1.5):
+    x = np.asarray(x, dtype=float)
+    low, up = iqr_bounds(x, whisker=whisker)
+    return (x < low) | (x > up)
+
+
+def clip_outliers_iqr(x, whisker=1.5):
+    x = np.asarray(x, dtype=float)
+    low, up = iqr_bounds(x, whisker=whisker)
+    return np.clip(x, low, up)
+
+
+def clip_outliers_zscore(x, threshold=3.0):
+    x = np.asarray(x, dtype=float)
+    mean = x.mean()
+    std = x.std()
+    if std == 0:
+        return x.copy()
+    low = mean - threshold * std
+    up = mean + threshold * std
+    return np.clip(x, low, up)
+
+
+def min_max_scale(x, feature_range=(0.0, 1.0)):
+    x = np.asarray(x, dtype=float)
+    min_val = np.min(x)
+    max_val = np.max(x)
+    if max_val == min_val:
+        return np.zeros_like(x), float(min_val), float(max_val)
+    a, b = feature_range
+    scaled = (x - min_val) / (max_val - min_val)
+    scaled = a + scaled * (b - a)
+    return scaled, float(min_val), float(max_val)
+
+
+def log_transform(x, eps=1e-8):
+    x = np.asarray(x, dtype=float)
+    x = x.copy()
+    x[x <= 0] = eps
+    return np.log(x)
+
+
+def decimal_scaling(x):
+    x = np.asarray(x, dtype=float)
+    max_abs = np.max(np.abs(x))
+    if max_abs == 0:
+        return x.copy(), 0
+    j = int(np.ceil(np.log10(max_abs)))
+    scaled = x / (10 ** j)
+    return scaled, j
+
+
+def zscore_standardize(x):
+    x = np.asarray(x, dtype=float)
+    mean = x.mean()
+    std = x.std()
+    if std == 0:
+        return np.zeros_like(x), float(mean), float(std)
+    return (x - mean) / std, float(mean), float(std)
+
+
+EXPERIENCE_ORDER = [
+    "<1",
+    "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "10", "11", "12", "13", "14", "15", "16",
+    "17", "18", "19", "20",
+    ">20",
+]
+
+COMPANY_SIZE_ORDER = [
+    "<10",
+    "10-49",
+    "50-99",
+    "100-500",
+    "500-999",
+    "1000-4999",
+    "5000-9999",
+    "10000+",
+]
+
+LAST_NEW_JOB_ORDER = [
+    "never",
+    "1",
+    "2",
+    "3",
+    "4",
+    ">4",
+]
+
+
+def ordinal_encode(col, ordered_values):
+    col = col.astype(str)
+    lookup = {v: i for i, v in enumerate(ordered_values)}
+    encoded = np.full(col.shape, -1, dtype=float)
+    for i, v in enumerate(col):
+        encoded[i] = lookup.get(v, -1)
+    return encoded, lookup
+
+
+def one_hot_encode(col, categories=None):
+    col = col.astype(str)
+    if categories is None:
+        categories = np.unique(col)
+    categories = list(categories)
+
+    col_expanded = col.reshape(-1, 1)
+    cats_arr = np.array(categories).reshape(1, -1)
+    encoded = (col_expanded == cats_arr).astype(float)
+    return encoded, categories
+
 
 def build_hr_feature_matrix(
-    header: np.ndarray,
-    data_norm: np.ndarray,
-    scale_numeric: bool = True,
-) -> Tuple[np.ndarray, np.ndarray, List[str], Dict]:
-    """
-    Xây dựng ma trận đặc trưng X và vector nhãn y cho dataset HR.
+    header,
+    data_raw,
+    impute_numeric_strategy="constant",
+    impute_categorical_strategy="constant",
+    scale_numeric=True,
+    log_transform_training_hours=True,
+    kmeans_k=3,
+):
+    data = data_raw.astype(str)
+    col_idx = {name: i for i, name in enumerate(header)}
 
-    Các bước chính:
-        - Chọn/encode các cột numeric & ordinal
-        - Điền missing
-        - Chuẩn hóa (Z-score) cho numeric
-        - One-hot encode một số cột categorical
-        - Ghép tất cả lại thành 1 ma trận NumPy
+    n_rows = data.shape[0]
 
-    Returns:
-        X: np.ndarray (n_samples, n_features)
-        y: np.ndarray (n_samples,)
-        feature_names: list[str]
-        meta: dict – lưu thông tin median, mean, std, mappings,...
-    """
-    col_index = {name: i for i, name in enumerate(header)}
+    if "target" in col_idx:
+        target_col = data[:, col_idx["target"]]
+        y = target_col.astype(float)
+    else:
+        y = None
 
-    # --- Lấy cột target ---
-    y_raw = data_norm[:, col_index["target"]]
-    y = np.array([int(v) for v in y_raw], dtype=float)
-
-    # --- Numeric / ordinal gốc (chưa impute) ---
-    cdi = to_float_array(data_norm[:, col_index["city_development_index"]])
-    training = to_float_array(data_norm[:, col_index["training_hours"]])
-    exp_years = parse_experience_column(data_norm[:, col_index["experience"]])
-    last_nj = parse_last_new_job_column(data_norm[:, col_index["last_new_job"]])
-    comp_size_ord = encode_company_size_ordinal(data_norm[:, col_index["company_size"]])
-
-    numeric_dict = {
-        "city_development_index": cdi,
-        "training_hours": training,
-        "experience_years": exp_years,
-        "last_new_job_num": last_nj,
-        "company_size_ord": comp_size_ord,
+    feature_blocks = []
+    feature_names = []
+    meta = {
+        "numeric_fill": {},
+        "numeric_scaler": {},
+        "ordinal_maps": {},
+        "one_hot_categories": {},
+        "kmeans_numeric": {},
     }
 
-    numeric_imputed = {}
-    numeric_stats = {}
+    numeric_values = {}
 
-    for name, col in numeric_dict.items():
-        filled, median_val = impute_numeric_median(col)
+    has_city = "city_development_index" in col_idx
+    has_train = "training_hours" in col_idx
+
+    if has_city and has_train:
+        city_filled, train_filled, centroids = kmeans_impute_city_training(
+            data,
+            col_idx_city=col_idx["city_development_index"],
+            col_idx_train=col_idx["training_hours"],
+            k=kmeans_k,
+        )
+        numeric_values["city_development_index"] = city_filled
+        numeric_values["training_hours"] = train_filled
+        meta["kmeans_numeric"]["city_training"] = {
+            "k": int(centroids.shape[0]),
+            "centroids": centroids.tolist(),
+        }
+    else:
+        if has_city:
+            city_vals, fill_val = impute_numeric(
+                data[:, col_idx["city_development_index"]],
+                strategy=impute_numeric_strategy,
+            )
+            numeric_values["city_development_index"] = city_vals
+            meta["numeric_fill"]["city_development_index"] = fill_val
+        if has_train:
+            train_vals, fill_val = impute_numeric(
+                data[:, col_idx["training_hours"]],
+                strategy=impute_numeric_strategy,
+            )
+            numeric_values["training_hours"] = train_vals
+            meta["numeric_fill"]["training_hours"] = fill_val
+
+    numeric_cols = list(numeric_values.keys())
+
+    for name in numeric_cols:
+        num_values = np.asarray(numeric_values[name], dtype=float)
+
+        num_values = clip_outliers_iqr(num_values)
+
+        if name == "training_hours" and log_transform_training_hours:
+            num_values = log_transform(num_values)
+
         if scale_numeric:
-            scaled, mean_val, std_val = zscore_scale(filled)
-            numeric_imputed[name] = scaled
-            numeric_stats[name] = {
-                "median": median_val,
-                "mean": mean_val,
-                "std": std_val,
-                "scaled": True,
-            }
+            num_scaled, mean, std = zscore_standardize(num_values)
+            meta["numeric_scaler"][name] = {"mean": mean, "std": std}
+            feature_blocks.append(num_scaled.reshape(n_rows, 1))
+            feature_names.append(f"{name}_zscore")
         else:
-            numeric_imputed[name] = filled
-            numeric_stats[name] = {
-                "median": median_val,
-                "scaled": False,
-            }
+            feature_blocks.append(num_values.reshape(n_rows, 1))
+            feature_names.append(name)
 
-    # --- Categorical: fill missing + one-hot ---
-    cat_cols = [
+    if "experience" in col_idx:
+        col = data[:, col_idx["experience"]]
+        col_filled, _ = impute_categorical(
+            col,
+            strategy=impute_categorical_strategy,
+            constant_value="Unknown",
+        )
+        enc, mapping = ordinal_encode(col_filled, EXPERIENCE_ORDER)
+        feature_blocks.append(enc.reshape(n_rows, 1))
+        feature_names.append("experience_ord")
+        meta["ordinal_maps"]["experience"] = mapping
+
+    if "company_size" in col_idx:
+        col = data[:, col_idx["company_size"]]
+        col_filled, _ = impute_categorical(
+            col,
+            strategy=impute_categorical_strategy,
+            constant_value="Unknown",
+        )
+        enc, mapping = ordinal_encode(col_filled, COMPANY_SIZE_ORDER)
+        feature_blocks.append(enc.reshape(n_rows, 1))
+        feature_names.append("company_size_ord")
+        meta["ordinal_maps"]["company_size"] = mapping
+
+    if "last_new_job" in col_idx:
+        col = data[:, col_idx["last_new_job"]]
+        col_filled, _ = impute_categorical(
+            col,
+            strategy=impute_categorical_strategy,
+            constant_value="Unknown",
+        )
+        enc, mapping = ordinal_encode(col_filled, LAST_NEW_JOB_ORDER)
+        feature_blocks.append(enc.reshape(n_rows, 1))
+        feature_names.append("last_new_job_ord")
+        meta["ordinal_maps"]["last_new_job"] = mapping
+
+    categorical_to_one_hot = [
         "gender",
         "relevent_experience",
         "enrolled_university",
@@ -300,66 +511,59 @@ def build_hr_feature_matrix(
         "city",
     ]
 
-    cat_encoded_blocks = []
-    cat_feature_names: List[str] = []
-    cat_impute_values = {}
+    for name in categorical_to_one_hot:
+        if name not in col_idx:
+            continue
+        cidx = col_idx[name]
+        col = data[:, cidx]
 
-    for col_name in cat_cols:
-        raw_col = data_norm[:, col_index[col_name]]
-        filled_col, fill_val = impute_categorical_mode(raw_col)
-        cat_impute_values[col_name] = fill_val
-
-        block, names_block = one_hot_encode_strings(
-            filled_col,
-            prefix=f"{col_name}=",
+        col_filled, _ = impute_categorical(
+            col,
+            strategy=impute_categorical_strategy,
+            constant_value="Unknown",
         )
-        cat_encoded_blocks.append(block)
-        cat_feature_names.extend(names_block)
 
-    # --- Ghép tất cả special numeric + categorical ---
-    X_numeric = np.column_stack([numeric_imputed[k] for k in numeric_imputed.keys()])
-    numeric_feature_names = list(numeric_imputed.keys())
+        one_hot, cats = one_hot_encode(col_filled)
+        feature_blocks.append(one_hot)
+        meta["one_hot_categories"][name] = cats
 
-    if cat_encoded_blocks:
-        X_categorical = np.column_stack(cat_encoded_blocks)
-        X = np.column_stack([X_numeric, X_categorical])
-        feature_names = numeric_feature_names + cat_feature_names
+        for c in cats:
+            feature_names.append(f"{name}={c}")
+
+    if len(feature_blocks) == 0:
+        X = np.empty((n_rows, 0), dtype=float)
     else:
-        X = X_numeric
-        feature_names = numeric_feature_names
-
-    meta = {
-        "numeric_features": numeric_feature_names,
-        "numeric_stats": numeric_stats,
-        "categorical_features": cat_cols,
-        "categorical_fill_values": cat_impute_values,
-        "feature_names": feature_names,
-    }
+        X = np.hstack(feature_blocks)
 
     return X, y, feature_names, meta
+
 
 def preprocess_hr_dataset(
-    csv_path: str,
-    scale_numeric: bool = True,
-) -> Tuple[np.ndarray, np.ndarray, List[str], Dict]:
-    """
-    Pipeline tiện dụng:
-        - Đọc CSV
-        - Chuẩn hóa missing
-        - Build ma trận X, y
+    csv_path,
+    delimiter=",",
+    encoding="utf-8",
+    has_header=True,
+    impute_numeric_strategy="constant",
+    impute_categorical_strategy="constant",
+    scale_numeric=True,
+    log_transform_training_hours=True,
+    kmeans_k=3,
+):
+    header, data_raw = load_csv_as_str(
+        csv_path,
+        delimiter=delimiter,
+        encoding=encoding,
+        has_header=has_header,
+    )
 
-    Dùng trong notebook:
-        header, raw = load_hr_csv(...)
-        data_norm = normalize_missing_values(raw)
-        X, y, feature_names, meta = build_hr_feature_matrix(header, data_norm)
-    Hoặc đơn giản hơn:
-        X, y, feature_names, meta = preprocess_hr_dataset(csv_path)
-    """
-    header, raw = load_hr_csv(csv_path)
-    data_norm = normalize_missing_values(raw)
     X, y, feature_names, meta = build_hr_feature_matrix(
         header,
-        data_norm,
+        data_raw,
+        impute_numeric_strategy=impute_numeric_strategy,
+        impute_categorical_strategy=impute_categorical_strategy,
         scale_numeric=scale_numeric,
+        log_transform_training_hours=log_transform_training_hours,
+        kmeans_k=kmeans_k,
     )
-    return X, y, feature_names, meta
+
+    return X, y, header, feature_names, meta
