@@ -1,18 +1,101 @@
 # src/models.py
 # ============================================================
-# Các mô hình và hàm đánh giá thuần NumPy
-# Dùng cho bài toán phân loại nhị phân (0 / 1), ví dụ:
-#   - HR Analytics: Job Change of Data Scientists
+# MÔ HÌNH & HÀM ĐÁNH GIÁ THUẦN NUMPY CHO BÀI TOÁN PHÂN LOẠI
+# - Logistic Regression (binary) cài từ đầu bằng NumPy
+# - Hàm mất mát (binary cross-entropy) + gradient descent
+# - Các độ đo: accuracy, precision, recall, F1, confusion matrix
+# - train/val split + K-fold cross-validation
+#
+# Ghi chú:
+# - Tuy đề cho phép dùng scikit-learn cho modeling,
+#   nhưng ở đây ta tự cài bằng NumPy để được bonus điểm. :contentReference[oaicite:1]{index=1}
+# - Notebook chỉ gọi các hàm bên dưới, KHÔNG cài thuật toán trong notebook.
 # ============================================================
 
+import os
 import numpy as np
+
+# Nếu muốn load trực tiếp từ CSV sạch:
+# (Giả sử em đã có load_csv_as_str trong src/data_processing.py)
+try:
+    from src.data_processing import load_csv_as_str
+except ImportError:
+    load_csv_as_str = None  # để tránh lỗi nếu chưa dùng đến
 
 RANDOM_STATE = 23120329
 
+# ============================================================
+# 0. Hàm tiện ích: load X, y từ CSV sạch (tùy chọn)
+#    Dùng khi dữ liệu đã encode/scale, chỉ còn numeric + 1 cột target.
+#    Nếu em đã có build_hr_feature_matrix rồi thì có thể KHÔNG dùng phần này.
+# ============================================================
 
-# ------------------------------------------------------------
-# 1. Tiện ích chia train / val
-# ------------------------------------------------------------
+def load_xy_from_clean_csv(csv_path: str, target_col: str = "target"):
+    """
+    Load dữ liệu từ một file CSV đã được xử lý sạch, tất cả các cột
+    (trừ target) đều là numeric.
+
+    Parameters
+    ----------
+    csv_path : str
+        Đường dẫn tới file CSV sạch.
+    target_col : str
+        Tên cột chứa nhãn (mặc định "target").
+
+    Returns
+    -------
+    X : np.ndarray, shape (n_samples, n_features)
+    y : np.ndarray, shape (n_samples,)
+    feature_names : list[str]
+        Tên các feature tương ứng với từng cột của X.
+
+    Ghi chú
+    -------
+    - Hàm này CHỈ là tiện ích: nếu em đã có X, y từ chỗ khác
+      (ví dụ dùng build_hr_feature_matrix) thì notebook có thể
+      bỏ qua hàm này.
+    """
+    if load_csv_as_str is None:
+        raise ImportError(
+            "Không tìm thấy hàm load_csv_as_str trong src.data_processing. "
+            "Nếu muốn dùng load_xy_from_clean_csv, hãy đảm bảo đã cài hàm đó."
+        )
+
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Không tìm thấy file: {csv_path}")
+
+    header, data_str = load_csv_as_str(
+        csv_path,
+        delimiter=",",
+        has_header=True,
+        encoding="utf-8",
+    )
+
+    if target_col not in header:
+        raise ValueError(f"Không tìm thấy cột target '{target_col}' trong header CSV.")
+    target_idx = header.index(target_col)
+
+    # y: cột target → float
+    y_raw = data_str[:, target_idx]
+    y = np.array([float(v) for v in y_raw], dtype=float)
+
+    # X: toàn bộ cột trừ target → float
+    feat_indices = [i for i in range(len(header)) if i != target_idx]
+    X_raw = data_str[:, feat_indices]
+
+    n_samples, n_features = X_raw.shape
+    X = np.empty((n_samples, n_features), dtype=float)
+    for j in range(n_features):
+        X[:, j] = np.array([float(v) for v in X_raw[:, j]], dtype=float)
+
+    feature_names = [header[i] for i in feat_indices]
+    return X, y, feature_names
+
+
+# ============================================================
+# 1. CHIA TRAIN / VALIDATION
+# ============================================================
+
 def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=RANDOM_STATE):
     """
     Chia dữ liệu thành train và validation.
@@ -24,11 +107,11 @@ def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=RANDOM_STATE
     y : np.ndarray, shape (n_samples,)
         Vector nhãn (0/1).
     val_ratio : float
-        Tỷ lệ dành cho validation (ví dụ 0.2 = 20%).
+        Tỷ lệ mẫu dành cho validation.
     shuffle : bool
         Có xáo trộn dữ liệu trước khi chia hay không.
     random_state : int
-        Seed cho bộ sinh số ngẫu nhiên (để tái lập kết quả).
+        Seed để tái lập kết quả.
 
     Returns
     -------
@@ -58,31 +141,34 @@ def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=RANDOM_STATE
     return X_train, X_val, y_train, y_val
 
 
-# ------------------------------------------------------------
-# 2. Hàm activation & loss cho Logistic Regression
-# ------------------------------------------------------------
+# ============================================================
+# 2. HÀM ACTIVATION & LOSS CHO LOGISTIC REGRESSION
+# ============================================================
+
 def sigmoid(z):
     """
-    Hàm sigmoid ổn định số học.
-
-    sigmoid(z) = 1 / (1 + exp(-z))
+    Hàm sigmoid ổn định số học: sigmoid(z) = 1 / (1 + exp(-z))
+    - Có clip z để tránh overflow khi |z| quá lớn.
     """
     z = np.asarray(z, dtype=float)
-    # Tránh overflow: clip giá trị z
     z = np.clip(z, -500, 500)
     return 1.0 / (1.0 + np.exp(-z))
 
 
 def binary_cross_entropy(y_true, y_prob, l2_term=0.0):
     """
-    Hàm mất mát cross-entropy cho phân loại nhị phân.
+    Hàm mất mát binary cross-entropy cho phân loại nhị phân.
 
     Parameters
     ----------
     y_true : (n_samples,)
     y_prob : (n_samples,) xác suất dự đoán P(y=1)
     l2_term : float
-        Thành phần regularization (không chia cho batch ở đây, chỉ cộng trực tiếp).
+        Thành phần regularization (đã chia batch nếu cần).
+
+    Returns
+    -------
+    loss : float
     """
     y_true = np.asarray(y_true, dtype=float).reshape(-1)
     y_prob = np.asarray(y_prob, dtype=float).reshape(-1)
@@ -90,22 +176,24 @@ def binary_cross_entropy(y_true, y_prob, l2_term=0.0):
     eps = 1e-15
     y_prob = np.clip(y_prob, eps, 1 - eps)
 
-    # - [ y log(p) + (1-y) log(1-p) ]
     ce = -(y_true * np.log(y_prob) + (1.0 - y_true) * np.log(1.0 - y_prob))
     loss = np.mean(ce) + l2_term
     return loss
 
 
-# ------------------------------------------------------------
-# 3. Logistic Regression nhị phân thuần NumPy
-# ------------------------------------------------------------
+# ============================================================
+# 3. LOGISTIC REGRESSION NHỊ PHÂN (NUMPY THUẦN)
+# ============================================================
+
 class LogisticRegressionBinary:
     """
-    Logistic Regression cho bài toán phân loại nhị phân.
+    Logistic Regression cho bài toán phân loại nhị phân (0/1).
 
-    - Sử dụng gradient descent full-batch.
+    - Dùng gradient descent full-batch.
     - Hỗ trợ L2 regularization.
     - Thuần NumPy, không dùng scikit-learn.
+    - Phù hợp với bài toán HR Analytics: Job Change of Data Scientists
+      và các bài toán binary khác trong đề. :contentReference[oaicite:2]{index=2}
     """
 
     def __init__(
@@ -129,9 +217,9 @@ class LogisticRegressionBinary:
         fit_intercept : bool
             Có học thêm bias (intercept) hay không.
         verbose : bool
-            Nếu True, mỗi một vài epoch sẽ in ra loss để theo dõi.
+            Nếu True, in loss theo từng epoch (hoặc mỗi vài epoch).
         random_state : int
-            Seed để khởi tạo trọng số ban đầu.
+            Seed khởi tạo trọng số ban đầu.
         """
         self.lr = lr
         self.n_epochs = n_epochs
@@ -140,12 +228,12 @@ class LogisticRegressionBinary:
         self.verbose = verbose
         self.random_state = random_state
 
-        # Trọng số sau khi fit
-        self.W = None  # shape (n_features,) hoặc (n_features+1,) nếu có bias
+        self.W = None              # vector trọng số (kể cả bias nếu có)
+        self.loss_history_ = []    # để vẽ đường hội tụ trong notebook
 
-        # Lịch sử loss (để plot nếu muốn)
-        self.loss_history_ = []
-
+    # ----------------------------
+    # Hàm nội bộ
+    # ----------------------------
     def _add_intercept(self, X):
         """
         Thêm cột 1 ở đầu ma trận X nếu fit_intercept=True.
@@ -163,18 +251,19 @@ class LogisticRegressionBinary:
         Khởi tạo trọng số W ngẫu nhiên nhỏ.
         """
         rng = np.random.default_rng(self.random_state)
-        # Khởi tạo nhỏ để tránh saturate sigmoid ngay từ đầu
         self.W = rng.normal(loc=0.0, scale=0.01, size=(n_features,))
 
+    # ----------------------------
+    # API chính: fit / predict
+    # ----------------------------
     def fit(self, X, y):
         """
-        Huấn luyện mô hình.
+        Huấn luyện mô hình Logistic Regression trên dữ liệu (X, y).
 
         Parameters
         ----------
         X : np.ndarray, shape (n_samples, n_features)
         y : np.ndarray, shape (n_samples,)
-            Nhãn nhị phân 0/1.
 
         Returns
         -------
@@ -184,25 +273,24 @@ class LogisticRegressionBinary:
         y = np.asarray(y, dtype=float).reshape(-1)
 
         # Thêm intercept nếu cần
-        X_ext = self._add_intercept(X)  # shape (n_samples, n_features_ext)
+        X_ext = self._add_intercept(X)
         n_samples, n_features_ext = X_ext.shape
 
-        # Khởi tạo W
+        # Khởi tạo trọng số
         self._init_weights(n_features_ext)
 
         for epoch in range(self.n_epochs):
-            # 1. Tính linear combination
-            z = X_ext @ self.W  # shape (n_samples,)
-            # 2. Tính xác suất
-            y_prob = sigmoid(z)  # shape (n_samples,)
+            # 1. Linear combination: z = X_ext @ W
+            z = X_ext @ self.W              # shape (n_samples,)
+            # 2. Xác suất dự đoán
+            y_prob = sigmoid(z)             # shape (n_samples,)
 
-            # 3. Tính gradient
-            # dL/dW = (1/n) * X^T (y_hat - y) + (l2/n) * W_no_bias
-            error = y_prob - y  # shape (n_samples,)
+            # 3. Gradient của loss (không tính regularization)
+            # error = y_hat - y
+            error = y_prob - y              # shape (n_samples,)
+            grad = (X_ext.T @ error) / n_samples
 
-            grad = (X_ext.T @ error) / n_samples  # shape (n_features_ext,)
-
-            # Regularization: không regularize bias (phần tử W[0]) nếu có bias
+            # 4. Thêm thành phần L2 (không regularize bias)
             if self.l2 > 0:
                 if self.fit_intercept:
                     w_reg = self.W.copy()
@@ -211,18 +299,18 @@ class LogisticRegressionBinary:
                     w_reg = self.W
                 grad += (self.l2 / n_samples) * w_reg
 
-            # 4. Cập nhật W
+            # 5. Cập nhật trọng số
             self.W -= self.lr * grad
 
-            # 5. Lưu loss cho việc theo dõi
+            # 6. Lưu loss (cho notebook vẽ)
             if self.verbose or epoch == self.n_epochs - 1:
                 reg_term = 0.0
                 if self.l2 > 0:
                     if self.fit_intercept:
-                        w_reg = self.W[1:]  # bỏ bias
+                        w_reg_loss = self.W[1:]  # bỏ bias
                     else:
-                        w_reg = self.W
-                    reg_term = (self.l2 / (2 * n_samples)) * np.sum(w_reg ** 2)
+                        w_reg_loss = self.W
+                    reg_term = (self.l2 / (2 * n_samples)) * np.sum(w_reg_loss ** 2)
 
                 loss = binary_cross_entropy(y, y_prob, l2_term=reg_term)
                 self.loss_history_.append(loss)
@@ -234,7 +322,7 @@ class LogisticRegressionBinary:
 
     def predict_proba(self, X):
         """
-        Trả về xác suất P(y=1 | x).
+        Trả về xác suất P(y=1 | x) cho từng mẫu.
 
         Parameters
         ----------
@@ -254,15 +342,16 @@ class LogisticRegressionBinary:
 
     def predict(self, X, threshold=0.5):
         """
-        Dự đoán nhãn 0/1 dựa trên threshold (mặc định 0.5).
+        Dự đoán nhãn 0/1 dựa trên threshold.
         """
         y_prob = self.predict_proba(X)
         return (y_prob >= threshold).astype(int)
 
 
-# ------------------------------------------------------------
-# 4. Các hàm đánh giá mô hình
-# ------------------------------------------------------------
+# ============================================================
+# 4. METRICS & CONFUSION MATRIX
+# ============================================================
+
 def accuracy_score(y_true, y_pred):
     """
     Accuracy = số mẫu dự đoán đúng / tổng số mẫu.
@@ -275,7 +364,10 @@ def accuracy_score(y_true, y_pred):
 
 def confusion_matrix_binary(y_true, y_pred, positive_label=1):
     """
-    Confusion matrix cho nhị phân: [[TN, FP], [FN, TP]]
+    Confusion matrix cho bài toán nhị phân:
+
+        [[TN, FP],
+         [FN, TP]]
     """
     y_true = np.asarray(y_true, dtype=int).reshape(-1)
     y_pred = np.asarray(y_pred, dtype=int).reshape(-1)
@@ -299,19 +391,8 @@ def precision_recall_f1(y_true, y_pred, positive_label=1):
     cm = confusion_matrix_binary(y_true, y_pred, positive_label=positive_label)
     TN, FP, FN, TP = cm.ravel()
 
-    # precision = TP / (TP + FP)
-    if TP + FP == 0:
-        precision = 0.0
-    else:
-        precision = TP / (TP + FP)
-
-    # recall = TP / (TP + FN)
-    if TP + FN == 0:
-        recall = 0.0
-    else:
-        recall = TP / (TP + FN)
-
-    # F1 = 2 * P * R / (P + R)
+    precision = 0.0 if (TP + FP) == 0 else TP / (TP + FP)
+    recall = 0.0 if (TP + FN) == 0 else TP / (TP + FN)
     if precision + recall == 0:
         f1 = 0.0
     else:
@@ -322,9 +403,20 @@ def precision_recall_f1(y_true, y_pred, positive_label=1):
 
 def evaluate_binary_classification(y_true, y_prob, threshold=0.5, positive_label=1):
     """
-    Convenience function:
-    - Chuyển xác suất thành nhãn
-    - Tính accuracy, precision, recall, F1 và confusion matrix
+    Hàm "tổng hợp" cho phân loại nhị phân:
+
+    - Chuyển xác suất thành nhãn với threshold.
+    - Tính Accuracy, Precision, Recall, F1, Confusion matrix.
+
+    Trả về dict:
+        {
+            "accuracy": ...,
+            "precision": ...,
+            "recall": ...,
+            "f1": ...,
+            "confusion_matrix": np.array([[TN, FP],[FN, TP]]),
+            "threshold": threshold,
+        }
     """
     y_true = np.asarray(y_true, dtype=float).reshape(-1)
     y_prob = np.asarray(y_prob, dtype=float).reshape(-1)
@@ -346,9 +438,10 @@ def evaluate_binary_classification(y_true, y_prob, threshold=0.5, positive_label
     return metrics
 
 
-# ------------------------------------------------------------
-# 5. K-fold Cross-validation đơn giản
-# ------------------------------------------------------------
+# ============================================================
+# 5. K-FOLD CROSS-VALIDATION CHO LOGISTIC REGRESSION
+# ============================================================
+
 def k_fold_indices(n_samples, k=5, shuffle=True, random_state=RANDOM_STATE):
     """
     Tạo index cho K-fold cross-validation.
@@ -363,7 +456,7 @@ def k_fold_indices(n_samples, k=5, shuffle=True, random_state=RANDOM_STATE):
         rng.shuffle(indices)
 
     fold_sizes = np.full(k, n_samples // k, dtype=int)
-    fold_sizes[: n_samples % k] += 1  # phân bổ phần dư
+    fold_sizes[: n_samples % k] += 1  # chia đều phần dư
 
     folds = []
     current = 0
@@ -396,7 +489,7 @@ def cross_val_logistic(
     ----------
     X, y : dữ liệu đầy đủ
     k : số folds
-    Các tham số còn lại truyền vào LogisticRegressionBinary
+    Các tham số còn lại truyền cho LogisticRegressionBinary.
 
     Returns
     -------
@@ -422,7 +515,7 @@ def cross_val_logistic(
             l2=l2,
             fit_intercept=fit_intercept,
             verbose=verbose,
-            random_state=random_state + fold_i,  # đổi seed chút xíu
+            random_state=random_state + fold_i,  # đổi seed nhẹ
         )
         clf.fit(X_train, y_train)
         y_val_prob = clf.predict_proba(X_val)
@@ -434,7 +527,6 @@ def cross_val_logistic(
         )
         fold_metrics.append(metrics)
 
-    # Trung bình trên các folds
     accs = [m["accuracy"] for m in fold_metrics]
     precs = [m["precision"] for m in fold_metrics]
     recs = [m["recall"] for m in fold_metrics]
