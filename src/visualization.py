@@ -8,11 +8,6 @@ sns.set(style="whitegrid")
 plt.rcParams["figure.figsize"] = (8, 5)
 
 def _clean_categorical(col_data):
-    """
-    Chuẩn hóa giá trị categorical:
-    - None, '' hoặc toàn khoảng trắng -> 'MISSING'
-    - Còn lại: strip() rồi giữ nguyên.
-    """
     cleaned = []
     for v in col_data:
         if v is None:
@@ -50,7 +45,7 @@ def plot_target_distribution(target_array, title="Phân phối biến mục tiê
     values, counts = np.unique(target_clean, return_counts=True)
     total = counts.sum()
 
-    print("\nPhân phối target:")
+    print("Phân phối target:")
     for v, c in zip(values, counts):
         print(f"target={int(v)} : {c} mẫu ({c/total:.2%})")
     print()
@@ -63,7 +58,7 @@ def plot_target_distribution(target_array, title="Phân phối biến mục tiê
     plt.tight_layout()
     plt.show()
 
-def plot_numeric_distribution(x, name, bins=30, show_kde=True, log_scale=False):
+def plot_numeric_distribution(x, name, bins=30, show_kde=True, log_scale=False, ax=None):
     x = np.asarray(x, dtype=float)
     x_clean = x[~np.isnan(x)]
     if x_clean.size == 0:
@@ -76,104 +71,103 @@ def plot_numeric_distribution(x, name, bins=30, show_kde=True, log_scale=False):
             print(f"{name}: không có giá trị dương để vẽ log-scale.")
             return
 
-    plt.figure(figsize=(7, 4))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 4))
 
-    plt.hist(x_clean, bins=bins, density=True, alpha=0.6, label="Histogram")
+    ax.hist(x_clean, bins=bins, density=False, alpha=0.6, label="Histogram")
 
     if show_kde and np.unique(x_clean).size > 1:
-        sns.kdeplot(
-            x=x_clean,
-            fill=False,
-            bw_adjust=1.0,
-            linewidth=2,
-            label="KDE",
-        )
+        sns.kdeplot(x=x_clean, fill=False, bw_adjust=1.0, linewidth=2, label="KDE", ax=ax)
     else:
-        print(f"{name}: không thể vẽ KDE (dữ liệu quá ít hoặc không có spread).")
+        print(f"{name}: bỏ KDE do dữ liệu quá ít hoặc trùng lặp.")
 
-    plt.title(f"Histogram of {name}" + (" (log scale)" if log_scale else ""))
-    plt.xlabel(name)
-    plt.ylabel("Density" if show_kde else "Count")
+    ax.set_title(f"Histogram of {name}")
+    ax.set_xlabel(name)
+    ax.set_ylabel("Density")
+    ax.legend()
 
-    if log_scale:
-        plt.xscale("log")
-
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_ecdf(x, name):
+def plot_ecdf(x, name, ax=None):
     x = np.asarray(x, dtype=float)
-    x_clean = np.sort(x[~np.isnan(x)])
+    x_clean = x[~np.isnan(x)]
     if x_clean.size == 0:
         print(f"Không có dữ liệu hợp lệ cho {name} để vẽ ECDF.")
         return
 
-    n = x_clean.size
+    x_sorted = np.sort(x_clean)
+    n = x_sorted.size
     y = np.arange(1, n + 1) / n
 
-    plt.figure(figsize=(6, 4))
-    plt.step(x_clean, y, where="post")
-    plt.title(f"ECDF of {name}")
-    plt.xlabel(name)
-    plt.ylabel("F(x)")
-    plt.tight_layout()
-    plt.show()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 4))
 
-def plot_categorical_distribution(col_data, col_name, top_k=None):
-    col_data = _clean_categorical(col_data)
+    ax.step(x_sorted, y, where="post")
+    ax.set_title(f"ECDF of {name}")
+    ax.set_xlabel(name)
+    ax.set_ylabel("F(x)")
 
-    values, counts = np.unique(col_data, return_counts=True)
-    idx_sorted = np.argsort(-counts)
-    values = values[idx_sorted]
-    counts = counts[idx_sorted]
+def plot_categorical_distribution(col_data, col_name, top_k=None, ax=None, missing_label="Missing"):
+    col_data = np.array(col_data, dtype=str)
 
-    if top_k is not None:
-        values = values[:top_k]
-        counts = counts[:top_k]
+    col_norm = np.char.strip(col_data)
+    col_norm[col_norm == ""] = missing_label
 
-    total = counts.sum()
+    values, counts = np.unique(col_norm, return_counts=True)
+    if top_k is not None and values.size > top_k:
+        idx = np.argsort(-counts)[:top_k]
+        values = values[idx]
+        counts = counts[idx]
 
-    print(f"\nThống kê categorical: {col_name}:")
-    for v, c in zip(values, counts):
-        print(f"{v:20s} : {c:6d} mẫu ({c/total:6.2%})")
-    print()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 4))
 
-    plt.figure(figsize=(8, 4))
-    plt.bar(values, counts)
-    plt.xticks(rotation=45, ha="right")
-    plt.title(f"Phân phối biến categorical: {col_name}")
-    plt.ylabel("Count")
-    plt.tight_layout()
-    plt.show()
+    ax.bar(values, counts)
+    ax.set_title(col_name)
+    ax.set_xlabel("Category")
+    ax.set_ylabel("Count")
+    ax.tick_params(axis="x", rotation=45)
 
-def plot_pie(col_data, col_name, top_k=None):
-    col_data = _clean_categorical(col_data)
+def plot_pie(col_data, col_name, top_k=5, ax=None, missing_label="Missing"):
+    col_data = np.array(col_data, dtype=str)
 
-    values, counts = np.unique(col_data, return_counts=True)
-    idx_sorted = np.argsort(-counts)
-    values = values[idx_sorted]
-    counts = counts[idx_sorted]
+    # chuẩn hóa & thay rỗng thành missing_label
+    col_norm = np.char.strip(col_data)
+    col_norm[col_norm == ""] = missing_label
 
-    if top_k is not None:
-        values = values[:top_k]
-        counts = counts[:top_k]
+    values, counts = np.unique(col_norm, return_counts=True)
+    if values.size > top_k:
+        idx = np.argsort(-counts)[:top_k]
+        values = values[idx]
+        counts = counts[idx]
 
-    total = counts.sum()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 4))
 
-    print(f"\nPie chart stats: {col_name}:")
-    for v, c in zip(values, counts):
-        print(f"{v:20s} : {c:6d} mẫu ({c/total:6.2%})")
-    print()
+    wedges, texts, autotexts = ax.pie(
+        counts,
+        labels=None,
+        autopct="%1.1f%%",
+        startangle=90,
+        pctdistance=0.8,
+    )
 
-    plt.figure(figsize=(6, 6))
-    plt.pie(counts, labels=values, autopct="%1.1f%%")
-    plt.title(f"Pie chart: {col_name}")
-    plt.tight_layout()
-    plt.show()
+    ax.set_title(f"{col_name} (top {top_k})")
+
+    ax.legend(
+        wedges,
+        values,
+        loc="center left",
+        bbox_to_anchor=(1.05, 0.5),
+        fontsize=8,
+        title=col_name,
+    )
 
 def plot_target_rate_by_category(col_data, target_array, col_name):
+    """
+    Vẽ và in bảng tỷ lệ target=1 theo từng category của biến col_name.
+    - col_data: mảng category (string, object, ...)
+    - target_array: mảng target (0/1 hoặc có NaN)
+    - col_name: tên biến (string)
+    """
     col_data = _clean_categorical(col_data)
     target_array = np.asarray(target_array, dtype=float)
 
@@ -192,94 +186,107 @@ def plot_target_rate_by_category(col_data, target_array, col_name):
             rates.append(np.mean(y_clean))
             counts.append(len(y_clean))
 
-    rates = np.array(rates)
-    counts = np.array(counts)
+    rates = np.array(rates, dtype=float)
+    counts = np.array(counts, dtype=int)
     uniq_vals = np.array(uniq_vals)
 
+    # Loại bỏ category không tính được rate
     valid_mask = ~np.isnan(rates)
     rates = rates[valid_mask]
     counts = counts[valid_mask]
     uniq_vals = uniq_vals[valid_mask]
 
+    # Sắp xếp giảm dần theo rate (tỷ lệ target=1)
     idx_sorted = np.argsort(-rates)
     rates = rates[idx_sorted]
     counts = counts[idx_sorted]
     uniq_vals = uniq_vals[idx_sorted]
 
-    print(f"\nTỷ lệ target=1 theo {col_name}:")
-    for v, r, c in zip(uniq_vals, rates, counts):
-        print(f"{v:20s} | n={c:4d} | rate={r:.3f}")
-    print()
+    # Giới hạn số category hiển thị cho đẹp
+    max_cat_show = 15
+    k = min(max_cat_show, len(uniq_vals))
 
-    plt.figure(figsize=(8, 4))
-    plt.bar(uniq_vals, rates)
+    # Hàm format tên category (cắt bớt nếu quá dài)
+    max_cat_len = 28
+    def fmt_cat(val):
+        s = str(val)
+        if len(s) > max_cat_len:
+            return s[: max_cat_len - 3] + "..."
+        return s
+
+    print("\n" + "=" * 80)
+    print(f"\t    Tỷ lệ target = 1 theo '{col_name}':")
+    print("-" * 80)
+    header = (
+        f"{'Category':<{max_cat_len}} | "
+        f"{'n':>6} | "
+        f"{'rate':>6} | "
+        f"{'% target=1':>11}"
+    )
+    print(header)
+    print("-" * 80)
+
+    for v, r, c in zip(uniq_vals[:k], rates[:k], counts[:k]):
+        cat_str = fmt_cat(v)
+        print(
+            f"{cat_str:<{max_cat_len}} | "
+            f"{c:6d} | "
+            f"{r:6.3f} | "
+            f"{r * 100:10.2f}%"
+        )
+
+    if len(uniq_vals) > k:
+        print("-" * 80)
+        print(f"(Đã ẩn bớt {len(uniq_vals) - k} category ít quan trọng hơn để bảng gọn hơn.)")
+    print("=" * 80)
+
+    # Vẽ bar chart cho top k category
+    plt.figure(figsize=(9, 4))
+    plt.bar(uniq_vals[:k], rates[:k])
     plt.xticks(rotation=45, ha="right")
     plt.ylabel("Tỷ lệ target = 1")
-    plt.title(f"Tỷ lệ đổi việc theo {col_name}")
+    plt.title(f"Tỷ lệ đổi việc theo {col_name} (top {k} category theo rate)")
     plt.tight_layout()
     plt.show()
 
-def boxplot_numeric_by_target(x, target_array, x_name):
+def boxplot_numeric_by_target(x, target, name, ax=None):
     x = np.asarray(x, dtype=float)
-    target_array = np.asarray(target_array, dtype=float)
+    t = np.asarray(target, dtype=float)
 
-    mask0 = (target_array == 0)
-    mask1 = (target_array == 1)
+    mask = ~np.isnan(x) & ~np.isnan(t)
+    x_clean = x[mask]
+    t_clean = t[mask]
 
-    x0 = x[mask0]
-    x1 = x[mask1]
+    data0 = x_clean[t_clean == 0]
+    data1 = x_clean[t_clean == 1]
 
-    x0 = x0[~np.isnan(x0)]
-    x1 = x1[~np.isnan(x1)]
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 4))
 
-    if x0.size == 0 or x1.size == 0:
-        print(f"Không đủ dữ liệu để vẽ boxplot {x_name} theo target.")
-        return
+    ax.boxplot([data0, data1], labels=["target=0", "target=1"])
+    ax.set_title(f"{name} vs target")
+    ax.set_ylabel(name)
 
-    plt.figure(figsize=(6, 4))
-    plt.boxplot([x0, x1], labels=["target=0", "target=1"])
-    plt.title(f"{x_name} theo target")
-    plt.ylabel(x_name)
-    plt.tight_layout()
-    plt.show()
-
-    print(f"Thống kê {x_name} theo target:")
-    print("target=0:",
-          "mean =", np.mean(x0),
-          "| median =", np.median(x0),
-          "| n =", len(x0))
-    print("target=1:",
-          "mean =", np.mean(x1),
-          "| median =", np.median(x1),
-          "| n =", len(x1))
-    print()
-
-def plot_hist_overlay_by_target(x, target_array, x_name, bins=30):
+def plot_hist_overlay_by_target(x, target, name, bins=30, ax=None):
     x = np.asarray(x, dtype=float)
-    target_array = np.asarray(target_array, dtype=float)
+    t = np.asarray(target, dtype=float)
 
-    mask0 = (target_array == 0)
-    mask1 = (target_array == 1)
+    mask = ~np.isnan(x) & ~np.isnan(t)
+    x_clean = x[mask]
+    t_clean = t[mask]
 
-    x0 = x[mask0]
-    x1 = x[mask1]
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 4))
 
-    x0 = x0[~np.isnan(x0)]
-    x1 = x1[~np.isnan(x1)]
+    x0 = x_clean[t_clean == 0]
+    x1 = x_clean[t_clean == 1]
 
-    if x0.size == 0 or x1.size == 0:
-        print(f"Không đủ dữ liệu để vẽ histogram overlay cho {x_name}.")
-        return
-
-    plt.figure(figsize=(8, 4))
-    plt.hist(x0, bins=bins, alpha=0.5, label="target=0", density=True)
-    plt.hist(x1, bins=bins, alpha=0.5, label="target=1", density=True)
-    plt.title(f"Histogram overlay: {x_name} theo target")
-    plt.xlabel(x_name)
-    plt.ylabel("Density")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    ax.hist(x0, bins=bins, alpha=0.6, density=True, label="target=0")
+    ax.hist(x1, bins=bins, alpha=0.6, density=True, label="target=1")
+    ax.set_title(f"Histogram of {name} by target")
+    ax.set_xlabel(name)
+    ax.set_ylabel("Density")
+    ax.legend()
 
 def plot_scatter(x, y, x_name, y_name):
     x = np.asarray(x, dtype=float)
@@ -345,37 +352,11 @@ def plot_correlation_heatmap(corr_matrix, feature_names, title="Correlation heat
     plt.tight_layout()
     plt.show()
 
-
-def plot_line(x_values, y_values, x_label, y_label, title):
-    x_values = np.asarray(x_values)
-    y_values = np.asarray(y_values, dtype=float)
-
-    plt.figure(figsize=(6, 4))
-    plt.plot(x_values, y_values, marker="o")
-    plt.title(title)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.tight_layout()
-    plt.show()
-
 def plot_outliers(x, mask_out, name):
-    """
-    Vẽ biểu đồ outlier cho một biến numeric.
-    Tham số:
-        x        : array-like numeric (có thể chứa np.nan)
-        mask_out : mảng bool cùng chiều với x, True nếu là outlier (theo IQR)
-        name     : tên biến, dùng cho tiêu đề/trục
-
-    Biểu đồ:
-        - Bên trái: boxplot để thấy median, IQR và các điểm outlier.
-        - Bên phải: scatter index vs value, tô khác màu cho inlier và outlier.
-    """
     x = np.asarray(x, dtype=float)
     mask_out = np.asarray(mask_out, dtype=bool)
 
     idx = np.arange(len(x))
-
-    # Lọc giá trị hợp lệ (không NaN)
     valid_mask = ~np.isnan(x)
     x_valid = x[valid_mask]
     idx_valid = idx[valid_mask]
@@ -389,12 +370,10 @@ def plot_outliers(x, mask_out, name):
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
-    # Boxplot bên trái
     axes[0].boxplot(x_valid, vert=True)
     axes[0].set_title(f"Boxplot – {name}")
     axes[0].set_ylabel(name)
 
-    # Scatter index vs value bên phải
     axes[1].scatter(idx_valid[in_valid], x_valid[in_valid], alpha=0.5, label="Inlier")
     if np.any(out_valid):
         axes[1].scatter(idx_valid[out_valid], x_valid[out_valid], alpha=0.9, marker="x", label="Outlier")
@@ -406,21 +385,7 @@ def plot_outliers(x, mask_out, name):
     plt.tight_layout()
     plt.show()
 
-def visualize_q1_risk_profiles(
-    experience,
-    last_new_job,
-    training_hours,
-    city_development_index,
-    target,
-    top_n=6,
-    min_count=50,
-):
-    """
-    Câu hỏi 1 (bản mới – rule-based segmentation):
-    Tìm ra các 'bộ feature' (phân khúc ứng viên) có tỷ lệ muốn đổi job cao nhất,
-    dựa trên việc chia các feature thành nhóm dễ hiểu rồi thống kê target.
-    """
-
+def visualize_q1_risk_profiles(experience, last_new_job, training_hours, city_development_index, target, top_n=6, min_count=50):
     exp = np.asarray(experience, dtype=float)
     lnj = np.asarray(last_new_job, dtype=float)
     trh = np.asarray(training_hours, dtype=float)
@@ -432,23 +397,23 @@ def visualize_q1_risk_profiles(
     lnj = lnj[mask_valid]
     trh = trh[mask_valid]
     cdi = cdi[mask_valid]
-    t   = t[mask_valid]
+    t = t[mask_valid]
 
     if exp.size == 0:
         print("Q1: Không có dữ liệu hợp lệ để phân tích bộ feature.")
         return
 
-    exp_bins   = np.array([0, 1, 3, 7, 50])
+    exp_bins = np.array([0, 1, 3, 7, 50])
     exp_labels = ["≤1 năm", "1–3 năm", "3–7 năm", ">7 năm"]
 
-    lnj_bins   = np.array([0, 1, 2, 4, 50])
+    lnj_bins = np.array([0, 1, 2, 4, 50])
     lnj_labels = ["≤1 năm", "1–2 năm", "2–4 năm", ">4 năm"]
 
     trh_quantiles = np.quantile(trh[~np.isnan(trh)], [0.25, 0.5, 0.75])
-    trh_bins   = np.concatenate([[0], trh_quantiles, [np.max(trh) + 1]])
+    trh_bins = np.concatenate([[0], trh_quantiles, [np.max(trh) + 1]])
     trh_labels = ["Thấp", "Trung bình", "Cao", "Rất cao"]
 
-    cdi_bins   = np.array([0.0, 0.6, 0.8, 1.0])
+    cdi_bins = np.array([0.0, 0.6, 0.8, 1.0])
     cdi_labels = ["CDI thấp", "CDI trung bình", "CDI cao"]
 
     def bin_with_labels(x, bins, labels, right=True):
@@ -469,23 +434,25 @@ def visualize_q1_risk_profiles(
             for it in range(len(trh_labels)):
                 for ic in range(len(cdi_labels)):
                     mask = (
-                        (exp_idx == ie) &
-                        (lnj_idx == il) &
-                        (trh_idx == it) &
-                        (cdi_idx == ic)
+                        (exp_idx == ie)
+                        & (lnj_idx == il)
+                        & (trh_idx == it)
+                        & (cdi_idx == ic)
                     )
                     n = np.sum(mask)
                     if n < min_count:
                         continue
                     rate = np.mean(t[mask])
-                    profiles.append({
-                        "exp_label": exp_labels[ie],
-                        "lnj_label": lnj_labels[il],
-                        "trh_label": trh_labels[it],
-                        "cdi_label": cdi_labels[ic],
-                        "count": int(n),
-                        "rate": float(rate),
-                    })
+                    profiles.append(
+                        {
+                            "exp_label": exp_labels[ie],
+                            "lnj_label": lnj_labels[il],
+                            "trh_label": trh_labels[it],
+                            "cdi_label": cdi_labels[ic],
+                            "count": int(n),
+                            "rate": float(rate),
+                        }
+                    )
 
     if not profiles:
         print("Q1: Không có profile nào đủ số lượng (min_count) để phân tích.")
@@ -495,8 +462,10 @@ def visualize_q1_risk_profiles(
     top_profiles = profiles_sorted[:top_n]
 
     line_width = 110
-    print(f"Q1: Top {len(top_profiles)} bộ feature có tỷ lệ target=1 cao nhất "
-          f"(chỉ xét profile có ít nhất {min_count} mẫu)")
+    print(
+        f"Q1: Top {len(top_profiles)} bộ feature có tỷ lệ target=1 cao nhất "
+        f"(chỉ xét profile có ít nhất {min_count} mẫu)"
+    )
     print("=" * line_width)
     header = (
         f"{'ID':<4} "
@@ -544,21 +513,7 @@ def visualize_q1_risk_profiles(
     plt.tight_layout()
     plt.show()
 
-def visualize_q2_training_hours_effect(
-    training_hours,
-    target,
-    bin_edges=None,
-):
-    """
-    Câu hỏi 2:
-    Xem mối quan hệ giữa training_hours và tỷ lệ target=1 theo các khoảng (bins),
-    để kiểm tra có 'điểm tới hạn' hay không.
-
-    Tham số:
-        training_hours, target: mảng 1D, có thể chứa np.nan.
-        bin_edges: np.array các biên bin (nếu None sẽ dùng giá trị mặc định).
-    """
-
+def visualize_q2_training_hours_effect(training_hours, target, bin_edges=None,):
     x = np.asarray(training_hours, dtype=float)
     t = np.asarray(target, dtype=float)
 
@@ -580,7 +535,7 @@ def visualize_q2_training_hours_effect(
     counts = []
 
     for b in range(1, len(bin_edges)):
-        mask = (bin_indices == b)
+        mask = bin_indices == b
         n = np.sum(mask)
         if n == 0:
             rates.append(np.nan)
@@ -620,15 +575,6 @@ def visualize_q3_exp_cdi_interaction(
     city_development_index,
     target,
 ):
-    """
-    Câu hỏi 3:
-    Xem tương tác giữa experience và city_development_index
-    (sau khi chia nhóm) và tỷ lệ target=1 cho từng ô (experience_group, cdi_group).
-
-    Tham số:
-        experience, city_development_index, target: mảng 1D, có thể chứa np.nan.
-    """
-
     exp = np.asarray(experience, dtype=float)
     cdi = np.asarray(city_development_index, dtype=float)
     t = np.asarray(target, dtype=float)
@@ -642,15 +588,13 @@ def visualize_q3_exp_cdi_interaction(
         print("Q3: Không có dữ liệu hợp lệ để phân tích.")
         return
 
-    # Binning experience
-    exp_bins = np.array([0, 1, 5, 10, 50])  # 0–1, 1–5, 5–10, >10
+    exp_bins = np.array([0, 1, 5, 10, 50])
     exp_labels = ["0-1", "1-5", "5-10", "10+"]
 
     exp_idx = np.digitize(exp_valid, exp_bins, right=True) - 1
     exp_idx[exp_idx < 0] = 0
     exp_idx[exp_idx >= len(exp_labels)] = len(exp_labels) - 1
 
-    # Binning CDI
     cdi_bins = np.array([0.0, 0.6, 0.8, 1.0])
     cdi_labels = ["Low", "Medium", "High"]
 
@@ -670,7 +614,6 @@ def visualize_q3_exp_cdi_interaction(
     print("Q3: Ma trận tỷ lệ target=1 (experience_group x cdi_group):")
     print(heat)
 
-    # Vẽ heatmap
     plt.figure(figsize=(6, 4))
     im = plt.imshow(heat, cmap="viridis", aspect="auto", origin="lower")
     plt.colorbar(im, label="Tỷ lệ target=1")
@@ -682,25 +625,24 @@ def visualize_q3_exp_cdi_interaction(
     for i in range(len(exp_labels)):
         for j in range(len(cdi_labels)):
             if not np.isnan(heat[i, j]):
-                plt.text(j, i, f"{heat[i,j]:.2f}", ha="center", va="center",
-                         color="white", fontsize=8)
+                plt.text(
+                    j,
+                    i,
+                    f"{heat[i, j]:.2f}",
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontsize=8,
+                )
     plt.tight_layout()
     plt.show()
+
 
 def visualize_q4_career_trajectories(
     experience,
     last_new_job,
     target,
 ):
-    """
-    Câu hỏi 4:
-    Phân loại ứng viên thành một số kiểu 'hành trình nghề nghiệp' đơn giản
-    dựa trên experience và last_new_job, sau đó xem tỷ lệ target=1 của mỗi kiểu.
-
-    Tham số:
-        experience, last_new_job, target: mảng 1D, có thể chứa np.nan.
-    """
-
     exp = np.asarray(experience, dtype=float)
     lnj = np.asarray(last_new_job, dtype=float)
     t = np.asarray(target, dtype=float)
@@ -738,11 +680,10 @@ def visualize_q4_career_trajectories(
 
     rates = []
     for typ in types:
-        m = (categories == typ)
+        m = categories == typ
         rates.append(np.mean(t_valid[m]))
     rates = np.array(rates, dtype=float)
 
-    # Bar chart tỷ lệ target=1 theo trajectory
     plt.figure(figsize=(6, 4))
     plt.bar(types, rates)
     for i, r in enumerate(rates):
@@ -753,6 +694,7 @@ def visualize_q4_career_trajectories(
     plt.tight_layout()
     plt.show()
 
+
 def visualize_q5_missing_patterns(
     missing_company_info,
     missing_edu_info,
@@ -762,17 +704,6 @@ def visualize_q5_missing_patterns(
     label_edu_present="edu info present",
     label_edu_missing="edu info missing",
 ):
-    """
-    Câu hỏi 5:
-    Xem pattern thiếu dữ liệu (missing) có liên quan tới target hay không.
-    Ở đây nhận vào hai cờ binary:
-        - missing_company_info: 1 nếu thiếu cả company_size & company_type.
-        - missing_edu_info: 1 nếu thiếu education_level hoặc major_discipline.
-
-    Tham số:
-        missing_company_info, missing_edu_info, target: mảng 1D cùng chiều.
-    """
-
     t = np.asarray(target, dtype=float)
     m_comp = np.asarray(missing_company_info, dtype=int)
     m_edu = np.asarray(missing_edu_info, dtype=int)
@@ -797,7 +728,6 @@ def visualize_q5_missing_patterns(
         rate = np.mean(t[m])
         print(f"{lab:20s}: n = {n:5d}, rate = {rate:.3f}")
 
-    # Bar chart cho missing_company_info
     labels_comp = [label_company_present, label_company_missing]
     rates_comp = []
     for v in [0, 1]:
@@ -817,7 +747,6 @@ def visualize_q5_missing_patterns(
     plt.tight_layout()
     plt.show()
 
-    # Bar chart cho missing_edu_info
     labels_edu = [label_edu_present, label_edu_missing]
     rates_edu = []
     for v in [0, 1]:
@@ -837,18 +766,8 @@ def visualize_q5_missing_patterns(
     plt.tight_layout()
     plt.show()
 
+
 def visualize_q6_risk_buckets(p_hat, target):
-    """
-    Câu hỏi 6:
-    Sau khi có xác suất dự đoán p_hat (ví dụ từ Logistic Regression),
-    chia ứng viên thành 3 mức risk (Low / Medium / High) và kiểm tra
-    tỷ lệ target=1 thực tế trong từng nhóm.
-
-    Tham số:
-        p_hat: mảng xác suất dự đoán trong [0,1], cùng chiều với target.
-        target: mảng 0/1 (có thể chứa np.nan).
-    """
-
     p = np.asarray(p_hat, dtype=float)
     t = np.asarray(target, dtype=float)
 
@@ -872,11 +791,10 @@ def visualize_q6_risk_buckets(p_hat, target):
 
     rates = []
     for typ in types:
-        m = (risk_levels == typ)
+        m = risk_levels == typ
         rates.append(np.mean(t_valid[m]))
     rates = np.array(rates, dtype=float)
 
-    # Bar chart: tỷ lệ target=1 thực tế trong từng risk bucket
     plt.figure(figsize=(5, 4))
     plt.bar(types, rates)
     for i, r in enumerate(rates):
