@@ -43,6 +43,20 @@ LAST_NEW_JOB_ORDER = [
     ">4",
 ]
 
+EDUCATION_LEVEL_ORDER = [
+    "Primary School",
+    "High School",
+    "Graduate",
+    "Masters",
+    "Phd",
+]
+
+ENROLLED_UNI_ORDER = [
+    "no_enrollment",
+    "Part time course",
+    "Full time course",
+]
+
 def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
     if has_header:
         with open(path, "r", encoding=encoding) as f:
@@ -94,6 +108,8 @@ def summarize_missing(data, header=None, extra_tokens=None):
         print("Missing summary theo column:")
         for name, c, r in zip(header, counts, ratios):
             print(f"{name:25s} | {c:6d} missing ({r:6.2%})")
+
+    return counts, ratios
 
 def string_column_to_float(col, missing_tokens=MISSING_TOKENS):
     col = col.astype(str)
@@ -350,13 +366,83 @@ def ordinal_encode(col, ordered_values):
         encoded[i] = lookup.get(v, -1)
     return encoded, lookup
 
-def one_hot_encode(col, categories=None):
+def one_hot_encode(col, categories=None, drop_first=False):
     col = col.astype(str)
+
     if categories is None:
         categories = np.unique(col)
     categories = list(categories)
 
-    col_expanded = col.reshape(-1, 1)
-    cats_arr = np.array(categories).reshape(1, -1)
-    encoded = (col_expanded == cats_arr).astype(float)
-    return encoded, categories
+    if drop_first and len(categories) > 1:
+        baseline = categories[0]
+        used_categories = categories[1:]
+    else:
+        baseline = None
+        used_categories = categories
+
+    if len(used_categories) == 0:
+        encoded = np.zeros((col.shape[0], 0), dtype=float)
+        return encoded, used_categories
+
+    col_expanded = col.reshape(-1, 1)                        
+    cats_arr = np.array(used_categories).reshape(1, -1)      
+    encoded = (col_expanded == cats_arr).astype(float)        
+
+    return encoded, used_categories
+
+def experience_to_numeric(col):
+    """
+    Clean chuỗi 'experience' -> numeric index dựa trên EXPERIENCE_ORDER.
+    Giá trị không hợp lệ hoặc missing -> np.nan.
+    """
+    col = col.astype(str)
+    norm = _normalize_str_array(col)
+    lookup = {v.lower(): i for i, v in enumerate(EXPERIENCE_ORDER)}
+
+    out = np.empty(col.shape[0], dtype=float)
+    out[:] = np.nan
+
+    missing_set = {tk.strip().lower() for tk in MISSING_TOKENS}
+
+    for i, v in enumerate(norm):
+        if v in lookup:
+            out[i] = float(lookup[v])
+        elif v in missing_set:
+            out[i] = np.nan
+        else:
+            out[i] = np.nan
+    return out
+
+def last_new_job_to_numeric(col):
+    """
+    Clean chuỗi 'last_new_job' -> numeric index dựa trên LAST_NEW_JOB_ORDER.
+    Giá trị không hợp lệ hoặc missing -> np.nan.
+    """
+    col = col.astype(str)
+    norm = _normalize_str_array(col)
+    lookup = {v.lower(): i for i, v in enumerate(LAST_NEW_JOB_ORDER)}
+
+    out = np.empty(col.shape[0], dtype=float)
+    out[:] = np.nan
+
+    missing_set = {tk.strip().lower() for tk in MISSING_TOKENS}
+
+    for i, v in enumerate(norm):
+        if v in lookup:
+            out[i] = float(lookup[v])
+        elif v in missing_set:
+            out[i] = np.nan
+        else:
+            out[i] = np.nan
+    return out
+
+def frequency_encode(col):
+    """
+    Frequency encoding cho 1 cột categorical.
+    """
+    col = col.astype(str)
+    values, counts = np.unique(col, return_counts=True)
+    freqs = counts.astype(float) / col.shape[0]
+    freq_map = {v: f for v, f in zip(values, freqs)}
+    encoded = np.array([freq_map[v] for v in col], dtype=float)
+    return encoded, freq_map
