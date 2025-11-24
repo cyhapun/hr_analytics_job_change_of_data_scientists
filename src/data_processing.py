@@ -15,6 +15,33 @@ MISSING_TOKENS = (
     "?",
 )
 
+EXPERIENCE_ORDER = [
+    "<1",
+    "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "10", "11", "12", "13", "14", "15", "16",
+    "17", "18", "19", "20",
+    ">20",
+]
+
+COMPANY_SIZE_ORDER = [
+    "<10",
+    "10-49",
+    "50-99",
+    "100-500",
+    "500-999",
+    "1000-4999",
+    "5000-9999",
+    "10000+",
+]
+
+LAST_NEW_JOB_ORDER = [
+    "never",
+    "1",
+    "2",
+    "3",
+    "4",
+    ">4",
+]
 
 def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
     if has_header:
@@ -42,11 +69,9 @@ def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
 
     return header, data.astype(str)
 
-
 def _normalize_str_array(arr):
     arr = arr.astype(str)
     return np.char.strip(np.char.lower(arr))
-
 
 def build_missing_mask(data, extra_tokens=None):
     tokens = set(MISSING_TOKENS)
@@ -60,7 +85,6 @@ def build_missing_mask(data, extra_tokens=None):
         mask |= (normalized == tk_norm)
     return mask
 
-
 def summarize_missing(data, header=None, extra_tokens=None):
     miss_mask = build_missing_mask(data, extra_tokens=extra_tokens)
     counts = miss_mask.sum(axis=0)
@@ -70,7 +94,6 @@ def summarize_missing(data, header=None, extra_tokens=None):
         print("Missing summary theo column:")
         for name, c, r in zip(header, counts, ratios):
             print(f"{name:25s} | {c:6d} missing ({r:6.2%})")
-
 
 def string_column_to_float(col, missing_tokens=MISSING_TOKENS):
     col = col.astype(str)
@@ -84,7 +107,6 @@ def string_column_to_float(col, missing_tokens=MISSING_TOKENS):
     tmp = col.copy()
     tmp[mask_missing] = "nan"
     return tmp.astype(float)
-
 
 def impute_numeric(col, strategy="constant", missing_tokens=MISSING_TOKENS):
     x = string_column_to_float(col, missing_tokens=missing_tokens)
@@ -101,7 +123,6 @@ def impute_numeric(col, strategy="constant", missing_tokens=MISSING_TOKENS):
 
     x[mask_nan] = fill_value
     return x, float(fill_value)
-
 
 def impute_categorical(col, strategy="mode", constant_value="Unknown",
                        missing_tokens=MISSING_TOKENS):
@@ -128,7 +149,6 @@ def impute_categorical(col, strategy="mode", constant_value="Unknown",
     col_filled = col.copy()
     col_filled[mask_missing] = fill
     return col_filled, fill
-
 
 def knn_impute_categorical(target_col, feature_matrix, k=5,
                            missing_tokens=MISSING_TOKENS):
@@ -170,7 +190,6 @@ def knn_impute_categorical(target_col, feature_matrix, k=5,
             col_filled[idx] = vals[np.argmax(counts)]
 
     return col_filled
-
 
 def kmeans_impute_city_training(
     data,
@@ -260,7 +279,6 @@ def kmeans_impute_city_training(
 
     return city_filled, training_filled, centroids
 
-
 def iqr_bounds(x, whisker=1.5):
     x = np.asarray(x, dtype=float)
     q1 = np.percentile(x, 25)
@@ -270,18 +288,15 @@ def iqr_bounds(x, whisker=1.5):
     upper = q3 + whisker * iqr
     return lower, upper
 
-
 def detect_outliers_iqr(x, whisker=1.5):
     x = np.asarray(x, dtype=float)
     low, up = iqr_bounds(x, whisker=whisker)
     return (x < low) | (x > up)
 
-
 def clip_outliers_iqr(x, whisker=1.5):
     x = np.asarray(x, dtype=float)
     low, up = iqr_bounds(x, whisker=whisker)
     return np.clip(x, low, up)
-
 
 def clip_outliers_zscore(x, threshold=3.0):
     x = np.asarray(x, dtype=float)
@@ -292,7 +307,6 @@ def clip_outliers_zscore(x, threshold=3.0):
     low = mean - threshold * std
     up = mean + threshold * std
     return np.clip(x, low, up)
-
 
 def min_max_scale(x, feature_range=(0.0, 1.0)):
     x = np.asarray(x, dtype=float)
@@ -305,13 +319,11 @@ def min_max_scale(x, feature_range=(0.0, 1.0)):
     scaled = a + scaled * (b - a)
     return scaled, float(min_val), float(max_val)
 
-
 def log_transform(x, eps=1e-8):
     x = np.asarray(x, dtype=float)
     x = x.copy()
     x[x <= 0] = eps
     return np.log(x)
-
 
 def decimal_scaling(x):
     x = np.asarray(x, dtype=float)
@@ -322,7 +334,6 @@ def decimal_scaling(x):
     scaled = x / (10 ** j)
     return scaled, j
 
-
 def zscore_standardize(x):
     x = np.asarray(x, dtype=float)
     mean = x.mean()
@@ -331,36 +342,6 @@ def zscore_standardize(x):
         return np.zeros_like(x), float(mean), float(std)
     return (x - mean) / std, float(mean), float(std)
 
-
-EXPERIENCE_ORDER = [
-    "<1",
-    "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    "10", "11", "12", "13", "14", "15", "16",
-    "17", "18", "19", "20",
-    ">20",
-]
-
-COMPANY_SIZE_ORDER = [
-    "<10",
-    "10-49",
-    "50-99",
-    "100-500",
-    "500-999",
-    "1000-4999",
-    "5000-9999",
-    "10000+",
-]
-
-LAST_NEW_JOB_ORDER = [
-    "never",
-    "1",
-    "2",
-    "3",
-    "4",
-    ">4",
-]
-
-
 def ordinal_encode(col, ordered_values):
     col = col.astype(str)
     lookup = {v: i for i, v in enumerate(ordered_values)}
@@ -368,7 +349,6 @@ def ordinal_encode(col, ordered_values):
     for i, v in enumerate(col):
         encoded[i] = lookup.get(v, -1)
     return encoded, lookup
-
 
 def one_hot_encode(col, categories=None):
     col = col.astype(str)
@@ -380,190 +360,3 @@ def one_hot_encode(col, categories=None):
     cats_arr = np.array(categories).reshape(1, -1)
     encoded = (col_expanded == cats_arr).astype(float)
     return encoded, categories
-
-
-def build_hr_feature_matrix(
-    header,
-    data_raw,
-    impute_numeric_strategy="constant",
-    impute_categorical_strategy="constant",
-    scale_numeric=True,
-    log_transform_training_hours=True,
-    kmeans_k=3,
-):
-    data = data_raw.astype(str)
-    col_idx = {name: i for i, name in enumerate(header)}
-
-    n_rows = data.shape[0]
-
-    if "target" in col_idx:
-        target_col = data[:, col_idx["target"]]
-        y = target_col.astype(float)
-    else:
-        y = None
-
-    feature_blocks = []
-    feature_names = []
-    meta = {
-        "numeric_fill": {},
-        "numeric_scaler": {},
-        "ordinal_maps": {},
-        "one_hot_categories": {},
-        "kmeans_numeric": {},
-    }
-
-    numeric_values = {}
-
-    has_city = "city_development_index" in col_idx
-    has_train = "training_hours" in col_idx
-
-    if has_city and has_train:
-        city_filled, train_filled, centroids = kmeans_impute_city_training(
-            data,
-            col_idx_city=col_idx["city_development_index"],
-            col_idx_train=col_idx["training_hours"],
-            k=kmeans_k,
-        )
-        numeric_values["city_development_index"] = city_filled
-        numeric_values["training_hours"] = train_filled
-        meta["kmeans_numeric"]["city_training"] = {
-            "k": int(centroids.shape[0]),
-            "centroids": centroids.tolist(),
-        }
-    else:
-        if has_city:
-            city_vals, fill_val = impute_numeric(
-                data[:, col_idx["city_development_index"]],
-                strategy=impute_numeric_strategy,
-            )
-            numeric_values["city_development_index"] = city_vals
-            meta["numeric_fill"]["city_development_index"] = fill_val
-        if has_train:
-            train_vals, fill_val = impute_numeric(
-                data[:, col_idx["training_hours"]],
-                strategy=impute_numeric_strategy,
-            )
-            numeric_values["training_hours"] = train_vals
-            meta["numeric_fill"]["training_hours"] = fill_val
-
-    numeric_cols = list(numeric_values.keys())
-
-    for name in numeric_cols:
-        num_values = np.asarray(numeric_values[name], dtype=float)
-
-        num_values = clip_outliers_iqr(num_values)
-
-        if name == "training_hours" and log_transform_training_hours:
-            num_values = log_transform(num_values)
-
-        if scale_numeric:
-            num_scaled, mean, std = zscore_standardize(num_values)
-            meta["numeric_scaler"][name] = {"mean": mean, "std": std}
-            feature_blocks.append(num_scaled.reshape(n_rows, 1))
-            feature_names.append(f"{name}_zscore")
-        else:
-            feature_blocks.append(num_values.reshape(n_rows, 1))
-            feature_names.append(name)
-
-    if "experience" in col_idx:
-        col = data[:, col_idx["experience"]]
-        col_filled, _ = impute_categorical(
-            col,
-            strategy=impute_categorical_strategy,
-            constant_value="Unknown",
-        )
-        enc, mapping = ordinal_encode(col_filled, EXPERIENCE_ORDER)
-        feature_blocks.append(enc.reshape(n_rows, 1))
-        feature_names.append("experience_ord")
-        meta["ordinal_maps"]["experience"] = mapping
-
-    if "company_size" in col_idx:
-        col = data[:, col_idx["company_size"]]
-        col_filled, _ = impute_categorical(
-            col,
-            strategy=impute_categorical_strategy,
-            constant_value="Unknown",
-        )
-        enc, mapping = ordinal_encode(col_filled, COMPANY_SIZE_ORDER)
-        feature_blocks.append(enc.reshape(n_rows, 1))
-        feature_names.append("company_size_ord")
-        meta["ordinal_maps"]["company_size"] = mapping
-
-    if "last_new_job" in col_idx:
-        col = data[:, col_idx["last_new_job"]]
-        col_filled, _ = impute_categorical(
-            col,
-            strategy=impute_categorical_strategy,
-            constant_value="Unknown",
-        )
-        enc, mapping = ordinal_encode(col_filled, LAST_NEW_JOB_ORDER)
-        feature_blocks.append(enc.reshape(n_rows, 1))
-        feature_names.append("last_new_job_ord")
-        meta["ordinal_maps"]["last_new_job"] = mapping
-
-    categorical_to_one_hot = [
-        "gender",
-        "relevent_experience",
-        "enrolled_university",
-        "education_level",
-        "major_discipline",
-        "company_type",
-        "city",
-    ]
-
-    for name in categorical_to_one_hot:
-        if name not in col_idx:
-            continue
-        cidx = col_idx[name]
-        col = data[:, cidx]
-
-        col_filled, _ = impute_categorical(
-            col,
-            strategy=impute_categorical_strategy,
-            constant_value="Unknown",
-        )
-
-        one_hot, cats = one_hot_encode(col_filled)
-        feature_blocks.append(one_hot)
-        meta["one_hot_categories"][name] = cats
-
-        for c in cats:
-            feature_names.append(f"{name}={c}")
-
-    if len(feature_blocks) == 0:
-        X = np.empty((n_rows, 0), dtype=float)
-    else:
-        X = np.hstack(feature_blocks)
-
-    return X, y, feature_names, meta
-
-
-def preprocess_hr_dataset(
-    csv_path,
-    delimiter=",",
-    encoding="utf-8",
-    has_header=True,
-    impute_numeric_strategy="constant",
-    impute_categorical_strategy="constant",
-    scale_numeric=True,
-    log_transform_training_hours=True,
-    kmeans_k=3,
-):
-    header, data_raw = load_csv_as_str(
-        csv_path,
-        delimiter=delimiter,
-        encoding=encoding,
-        has_header=has_header,
-    )
-
-    X, y, feature_names, meta = build_hr_feature_matrix(
-        header,
-        data_raw,
-        impute_numeric_strategy=impute_numeric_strategy,
-        impute_categorical_strategy=impute_categorical_strategy,
-        scale_numeric=scale_numeric,
-        log_transform_training_hours=log_transform_training_hours,
-        kmeans_k=kmeans_k,
-    )
-
-    return X, y, header, feature_names, meta
