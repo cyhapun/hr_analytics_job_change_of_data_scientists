@@ -1,433 +1,129 @@
-# src/models.py
-# ============================================================
-# MÔ HÌNH & HÀM ĐÁNH GIÁ THUẦN NUMPY CHO BÀI TOÁN PHÂN LOẠI
-# - Logistic Regression (binary) cài từ đầu bằng NumPy
-# - Hàm mất mát (binary cross-entropy) + gradient descent
-# - Các độ đo: accuracy, precision, recall, F1, confusion matrix
-# - train/val split + K-fold cross-validation
-#
-# Ghi chú:
-# - Tuy đề cho phép dùng scikit-learn cho modeling,
-#   nhưng ở đây ta tự cài bằng NumPy để được bonus điểm. :contentReference[oaicite:1]{index=1}
-# - Notebook chỉ gọi các hàm bên dưới, KHÔNG cài thuật toán trong notebook.
-# ============================================================
-
-import os
 import numpy as np
-
-# Nếu muốn load trực tiếp từ CSV sạch:
-# (Giả sử em đã có load_csv_as_str trong src/data_processing.py)
-try:
-    from src.data_processing import load_csv_as_str
-except ImportError:
-    load_csv_as_str = None  # để tránh lỗi nếu chưa dùng đến
-
-RANDOM_STATE = 23120329
-
-# ============================================================
-# 0. Hàm tiện ích: load X, y từ CSV sạch (tùy chọn)
-#    Dùng khi dữ liệu đã encode/scale, chỉ còn numeric + 1 cột target.
-#    Nếu em đã có build_hr_feature_matrix rồi thì có thể KHÔNG dùng phần này.
-# ============================================================
-
-def load_xy_from_clean_csv(csv_path: str, target_col: str = "target"):
-    """
-    Load dữ liệu từ một file CSV đã được xử lý sạch, tất cả các cột
-    (trừ target) đều là numeric.
-
-    Parameters
-    ----------
-    csv_path : str
-        Đường dẫn tới file CSV sạch.
-    target_col : str
-        Tên cột chứa nhãn (mặc định "target").
-
-    Returns
-    -------
-    X : np.ndarray, shape (n_samples, n_features)
-    y : np.ndarray, shape (n_samples,)
-    feature_names : list[str]
-        Tên các feature tương ứng với từng cột của X.
-
-    Ghi chú
-    -------
-    - Hàm này CHỈ là tiện ích: nếu em đã có X, y từ chỗ khác
-      (ví dụ dùng build_hr_feature_matrix) thì notebook có thể
-      bỏ qua hàm này.
-    """
-    if load_csv_as_str is None:
-        raise ImportError(
-            "Không tìm thấy hàm load_csv_as_str trong src.data_processing. "
-            "Nếu muốn dùng load_xy_from_clean_csv, hãy đảm bảo đã cài hàm đó."
-        )
-
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Không tìm thấy file: {csv_path}")
-
-    header, data_str = load_csv_as_str(
-        csv_path,
-        delimiter=",",
-        has_header=True,
-        encoding="utf-8",
-    )
-
-    if target_col not in header:
-        raise ValueError(f"Không tìm thấy cột target '{target_col}' trong header CSV.")
-    target_idx = header.index(target_col)
-
-    # y: cột target → float
-    y_raw = data_str[:, target_idx]
-    y = np.array([float(v) for v in y_raw], dtype=float)
-
-    # X: toàn bộ cột trừ target → float
-    feat_indices = [i for i in range(len(header)) if i != target_idx]
-    X_raw = data_str[:, feat_indices]
-
-    n_samples, n_features = X_raw.shape
-    X = np.empty((n_samples, n_features), dtype=float)
-    for j in range(n_features):
-        X[:, j] = np.array([float(v) for v in X_raw[:, j]], dtype=float)
-
-    feature_names = [header[i] for i in feat_indices]
-    return X, y, feature_names
-
-
-# ============================================================
-# 1. CHIA TRAIN / VALIDATION
-# ============================================================
-
-def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=RANDOM_STATE):
-    """
-    Chia dữ liệu thành train và validation.
-
-    Parameters
-    ----------
-    X : np.ndarray, shape (n_samples, n_features)
-        Ma trận đặc trưng.
-    y : np.ndarray, shape (n_samples,)
-        Vector nhãn (0/1).
-    val_ratio : float
-        Tỷ lệ mẫu dành cho validation.
-    shuffle : bool
-        Có xáo trộn dữ liệu trước khi chia hay không.
-    random_state : int
-        Seed để tái lập kết quả.
-
-    Returns
-    -------
-    X_train, X_val, y_train, y_val
-    """
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=float).reshape(-1)
-
-    assert X.shape[0] == y.shape[0], "Số dòng của X và y phải trùng nhau."
-
-    n_samples = X.shape[0]
-    n_val = int(np.round(n_samples * val_ratio))
-
-    indices = np.arange(n_samples)
-    if shuffle:
-        rng = np.random.default_rng(random_state)
-        rng.shuffle(indices)
-
-    val_idx = indices[:n_val]
-    train_idx = indices[n_val:]
-
-    X_train = X[train_idx]
-    y_train = y[train_idx]
-    X_val = X[val_idx]
-    y_val = y[val_idx]
-
-    return X_train, X_val, y_train, y_val
-
-
-# ============================================================
-# 2. HÀM ACTIVATION & LOSS CHO LOGISTIC REGRESSION
-# ============================================================
+from tqdm import trange
 
 def sigmoid(z):
-    """
-    Hàm sigmoid ổn định số học: sigmoid(z) = 1 / (1 + exp(-z))
-    - Có clip z để tránh overflow khi |z| quá lớn.
-    """
-    z = np.asarray(z, dtype=float)
     z = np.clip(z, -500, 500)
     return 1.0 / (1.0 + np.exp(-z))
 
-
-def binary_cross_entropy(y_true, y_prob, l2_term=0.0):
-    """
-    Hàm mất mát binary cross-entropy cho phân loại nhị phân.
-
-    Parameters
-    ----------
-    y_true : (n_samples,)
-    y_prob : (n_samples,) xác suất dự đoán P(y=1)
-    l2_term : float
-        Thành phần regularization (đã chia batch nếu cần).
-
-    Returns
-    -------
-    loss : float
-    """
-    y_true = np.asarray(y_true, dtype=float).reshape(-1)
-    y_prob = np.asarray(y_prob, dtype=float).reshape(-1)
-
+def binary_cross_entropy(y_true, y_prob):
     eps = 1e-15
     y_prob = np.clip(y_prob, eps, 1 - eps)
+    return -np.mean(y_true * np.log(y_prob) + (1 - y_true) * np.log(1 - y_prob))
 
-    ce = -(y_true * np.log(y_prob) + (1.0 - y_true) * np.log(1.0 - y_prob))
-    loss = np.mean(ce) + l2_term
-    return loss
+def roc_auc_score(y_true, y_prob):
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
 
+    order = np.argsort(y_prob)
+    y_true_sorted = y_true[order]
 
-# ============================================================
-# 3. LOGISTIC REGRESSION NHỊ PHÂN (NUMPY THUẦN)
-# ============================================================
+    n_pos = np.sum(y_true_sorted == 1)
+    n_neg = np.sum(y_true_sorted == 0)
 
-class LogisticRegressionBinary:
-    """
-    Logistic Regression cho bài toán phân loại nhị phân (0/1).
+    if n_pos == 0 or n_neg == 0:
+        return 0.0
 
-    - Dùng gradient descent full-batch.
-    - Hỗ trợ L2 regularization.
-    - Thuần NumPy, không dùng scikit-learn.
-    - Phù hợp với bài toán HR Analytics: Job Change of Data Scientists
-      và các bài toán binary khác trong đề. :contentReference[oaicite:2]{index=2}
-    """
+    ranks = np.arange(1, len(y_true_sorted) + 1)
+    rank_sum_pos = np.sum(ranks[y_true_sorted == 1])
 
-    def __init__(
-        self,
-        lr=0.1,
-        n_epochs=1000,
-        l2=0.0,
-        fit_intercept=True,
-        verbose=False,
-        random_state=RANDOM_STATE,
-    ):
-        """
-        Parameters
-        ----------
-        lr : float
-            Learning rate cho gradient descent.
-        n_epochs : int
-            Số vòng lặp huấn luyện.
-        l2 : float
-            Hệ số L2 regularization (lambda).
-        fit_intercept : bool
-            Có học thêm bias (intercept) hay không.
-        verbose : bool
-            Nếu True, in loss theo từng epoch (hoặc mỗi vài epoch).
-        random_state : int
-            Seed khởi tạo trọng số ban đầu.
-        """
-        self.lr = lr
-        self.n_epochs = n_epochs
-        self.l2 = l2
-        self.fit_intercept = fit_intercept
-        self.verbose = verbose
-        self.random_state = random_state
+    U = rank_sum_pos - n_pos * (n_pos + 1) / 2.0
+    auc = U / (n_pos * n_neg)
+    return float(auc)
 
-        self.W = None              # vector trọng số (kể cả bias nếu có)
-        self.loss_history_ = []    # để vẽ đường hội tụ trong notebook
+def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
+    with open(path, "r", encoding=encoding) as f:
+        lines = f.read().strip().split("\n")
+    if has_header:
+        header = lines[0].split(delimiter)
+        rows = lines[1:]
+    else:
+        header = None
+        rows = lines
+    data = [row.split(delimiter) for row in rows]
+    return header, np.array(data, dtype=str)
 
-    # ----------------------------
-    # Hàm nội bộ
-    # ----------------------------
-    def _add_intercept(self, X):
-        """
-        Thêm cột 1 ở đầu ma trận X nếu fit_intercept=True.
-        """
-        if not self.fit_intercept:
-            return X
+def load_xy_from_clean_csv(csv_path, target_col="target"):
+    header, data_str = load_csv_as_str(csv_path)
+    if target_col not in header:
+        raise ValueError(f"Không thấy cột target '{target_col}'.")
+    t_idx = header.index(target_col)
+    y_raw = data_str[:, t_idx]
+    y = np.array([float(v) for v in y_raw], dtype=float)
+    feat_idx = [i for i in range(len(header)) if i != t_idx]
+    X_raw = data_str[:, feat_idx]
+    X = np.zeros_like(X_raw, dtype=float)
+    for j in range(X_raw.shape[1]):
+        X[:, j] = np.array([float(z) for z in X_raw[:, j]], dtype=float)
+    feat_names = [header[i] for i in feat_idx]
+    return X, y, feat_names
 
-        X = np.asarray(X, dtype=float)
-        n_samples = X.shape[0]
-        ones = np.ones((n_samples, 1), dtype=float)
-        return np.concatenate([ones, X], axis=1)
+def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=42):
+    X = np.asarray(X)
+    y = np.asarray(y)
+    n = X.shape[0]
+    n_val = int(n * val_ratio)
+    idx = np.arange(n)
+    if shuffle:
+        rng = np.random.default_rng(random_state)
+        rng.shuffle(idx)
+    val_idx = idx[:n_val]
+    train_idx = idx[n_val:]
+    return X[train_idx], X[val_idx], y[train_idx], y[val_idx]
 
-    def _init_weights(self, n_features):
-        """
-        Khởi tạo trọng số W ngẫu nhiên nhỏ.
-        """
-        rng = np.random.default_rng(self.random_state)
-        self.W = rng.normal(loc=0.0, scale=0.01, size=(n_features,))
-
-    # ----------------------------
-    # API chính: fit / predict
-    # ----------------------------
-    def fit(self, X, y):
-        """
-        Huấn luyện mô hình Logistic Regression trên dữ liệu (X, y).
-
-        Parameters
-        ----------
-        X : np.ndarray, shape (n_samples, n_features)
-        y : np.ndarray, shape (n_samples,)
-
-        Returns
-        -------
-        self
-        """
-        X = np.asarray(X, dtype=float)
-        y = np.asarray(y, dtype=float).reshape(-1)
-
-        # Thêm intercept nếu cần
-        X_ext = self._add_intercept(X)
-        n_samples, n_features_ext = X_ext.shape
-
-        # Khởi tạo trọng số
-        self._init_weights(n_features_ext)
-
-        for epoch in range(self.n_epochs):
-            # 1. Linear combination: z = X_ext @ W
-            z = X_ext @ self.W              # shape (n_samples,)
-            # 2. Xác suất dự đoán
-            y_prob = sigmoid(z)             # shape (n_samples,)
-
-            # 3. Gradient của loss (không tính regularization)
-            # error = y_hat - y
-            error = y_prob - y              # shape (n_samples,)
-            grad = (X_ext.T @ error) / n_samples
-
-            # 4. Thêm thành phần L2 (không regularize bias)
-            if self.l2 > 0:
-                if self.fit_intercept:
-                    w_reg = self.W.copy()
-                    w_reg[0] = 0.0  # không phạt bias
-                else:
-                    w_reg = self.W
-                grad += (self.l2 / n_samples) * w_reg
-
-            # 5. Cập nhật trọng số
-            self.W -= self.lr * grad
-
-            # 6. Lưu loss (cho notebook vẽ)
-            if self.verbose or epoch == self.n_epochs - 1:
-                reg_term = 0.0
-                if self.l2 > 0:
-                    if self.fit_intercept:
-                        w_reg_loss = self.W[1:]  # bỏ bias
-                    else:
-                        w_reg_loss = self.W
-                    reg_term = (self.l2 / (2 * n_samples)) * np.sum(w_reg_loss ** 2)
-
-                loss = binary_cross_entropy(y, y_prob, l2_term=reg_term)
-                self.loss_history_.append(loss)
-
-                if self.verbose and (epoch % 100 == 0 or epoch == self.n_epochs - 1):
-                    print(f"[Epoch {epoch:4d}] Loss = {loss:.6f}")
-
-        return self
-
-    def predict_proba(self, X):
-        """
-        Trả về xác suất P(y=1 | x) cho từng mẫu.
-
-        Parameters
-        ----------
-        X : np.ndarray, shape (n_samples, n_features)
-
-        Returns
-        -------
-        y_prob : np.ndarray, shape (n_samples,)
-        """
-        if self.W is None:
-            raise ValueError("Model chưa được fit. Hãy gọi .fit(X, y) trước.")
-
-        X = np.asarray(X, dtype=float)
-        X_ext = self._add_intercept(X)
-        z = X_ext @ self.W
-        return sigmoid(z)
-
-    def predict(self, X, threshold=0.5):
-        """
-        Dự đoán nhãn 0/1 dựa trên threshold.
-        """
-        y_prob = self.predict_proba(X)
-        return (y_prob >= threshold).astype(int)
-
-
-# ============================================================
-# 4. METRICS & CONFUSION MATRIX
-# ============================================================
+def train_val_test_split(X, y, val_ratio=0.2, test_ratio=0.2,
+                         shuffle=True, random_state=42):
+    X = np.asarray(X)
+    y = np.asarray(y)
+    n = X.shape[0]
+    n_test = int(n * test_ratio)
+    idx = np.arange(n)
+    if shuffle:
+        rng = np.random.default_rng(random_state)
+        rng.shuffle(idx)
+    test_idx = idx[:n_test]
+    remain = idx[n_test:]
+    n_remain = remain.shape[0]
+    n_val = int(n_remain * val_ratio / (1.0 - test_ratio))
+    val_idx = remain[:n_val]
+    train_idx = remain[n_val:]
+    return (
+        X[train_idx], X[val_idx], X[test_idx],
+        y[train_idx], y[val_idx], y[test_idx],
+    )
 
 def accuracy_score(y_true, y_pred):
-    """
-    Accuracy = số mẫu dự đoán đúng / tổng số mẫu.
-    """
-    y_true = np.asarray(y_true, dtype=float).reshape(-1)
-    y_pred = np.asarray(y_pred, dtype=float).reshape(-1)
-    assert y_true.shape == y_pred.shape
+    y_true = np.asarray(y_true).reshape(-1)
+    y_pred = np.asarray(y_pred).reshape(-1)
     return np.mean(y_true == y_pred)
 
-
 def confusion_matrix_binary(y_true, y_pred, positive_label=1):
-    """
-    Confusion matrix cho bài toán nhị phân:
-
-        [[TN, FP],
-         [FN, TP]]
-    """
-    y_true = np.asarray(y_true, dtype=int).reshape(-1)
-    y_pred = np.asarray(y_pred, dtype=int).reshape(-1)
-
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
     pos = positive_label
     neg = 1 - pos
-
     TP = np.sum((y_true == pos) & (y_pred == pos))
     TN = np.sum((y_true == neg) & (y_pred == neg))
     FP = np.sum((y_true == neg) & (y_pred == pos))
     FN = np.sum((y_true == pos) & (y_pred == neg))
-
     return np.array([[TN, FP],
                      [FN, TP]], dtype=int)
 
-
 def precision_recall_f1(y_true, y_pred, positive_label=1):
-    """
-    Tính precision, recall, F1 cho lớp positive_label.
-    """
-    cm = confusion_matrix_binary(y_true, y_pred, positive_label=positive_label)
+    cm = confusion_matrix_binary(y_true, y_pred, positive_label)
     TN, FP, FN, TP = cm.ravel()
-
     precision = 0.0 if (TP + FP) == 0 else TP / (TP + FP)
     recall = 0.0 if (TP + FN) == 0 else TP / (TP + FN)
-    if precision + recall == 0:
-        f1 = 0.0
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
-
+    f1 = 0.0 if (precision + recall) == 0 else 2 * precision * recall / (precision + recall)
     return precision, recall, f1
 
-
-def evaluate_binary_classification(y_true, y_prob, threshold=0.5, positive_label=1):
-    """
-    Hàm "tổng hợp" cho phân loại nhị phân:
-
-    - Chuyển xác suất thành nhãn với threshold.
-    - Tính Accuracy, Precision, Recall, F1, Confusion matrix.
-
-    Trả về dict:
-        {
-            "accuracy": ...,
-            "precision": ...,
-            "recall": ...,
-            "f1": ...,
-            "confusion_matrix": np.array([[TN, FP],[FN, TP]]),
-            "threshold": threshold,
-        }
-    """
-    y_true = np.asarray(y_true, dtype=float).reshape(-1)
-    y_prob = np.asarray(y_prob, dtype=float).reshape(-1)
-
+def evaluate_binary_classification(y_true, y_prob, threshold=0.5):
+    y_true = np.asarray(y_true).reshape(-1)
+    y_prob = np.asarray(y_prob).reshape(-1)
     y_pred = (y_prob >= threshold).astype(int)
-
     acc = accuracy_score(y_true, y_pred)
-    prec, rec, f1 = precision_recall_f1(y_true, y_pred, positive_label=positive_label)
-    cm = confusion_matrix_binary(y_true, y_pred, positive_label=positive_label)
-
-    metrics = {
+    prec, rec, f1 = precision_recall_f1(y_true, y_pred)
+    cm = confusion_matrix_binary(y_true, y_pred)
+    return {
         "accuracy": acc,
         "precision": prec,
         "recall": rec,
@@ -435,108 +131,588 @@ def evaluate_binary_classification(y_true, y_prob, threshold=0.5, positive_label
         "confusion_matrix": cm,
         "threshold": threshold,
     }
-    return metrics
+
+def find_best_threshold(y_true, y_prob, n_points=200):
+    y_true = np.asarray(y_true).reshape(-1)
+    y_prob = np.asarray(y_prob).reshape(-1)
+    thresholds = np.linspace(0, 1, n_points)
+    best_t = 0.5
+    best_f1 = -1.0
+    for t in thresholds:
+        y_pred = (y_prob >= t).astype(int)
+        _, _, f1 = precision_recall_f1(y_true, y_pred)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_t = t
+    return best_t, best_f1
+
+# LOGISTIC REGRESSION
+class LogisticRegression:
+    def __init__(
+        self,
+        lr=0.1,
+        n_epochs=500,
+        batch_size=None,
+        l2=0.0,
+        l1=0.0,
+        optimizer="adam",
+        lr_decay=0.0,
+        early_stopping=False,
+        patience=20,
+        random_state=42,
+    ):
+        self.lr = lr
+        self.n_epochs = n_epochs
+        self.batch_size = batch_size
+        self.l2 = l2
+        self.l1 = l1
+        self.optimizer = optimizer
+        self.lr_decay = lr_decay
+        self.early_stopping = early_stopping
+        self.patience = patience
+        self.random_state = random_state
+        self.W = None
+        self.train_loss_history = []
+        self.val_loss_history = []
+
+    def _add_intercept(self, X):
+        X = np.asarray(X, float)
+        return np.hstack([np.ones((X.shape[0], 1)), X])
+
+    def _init_optimizer(self, dim):
+        if self.optimizer == "sgd":
+            self.m = None
+            self.v = None
+        elif self.optimizer == "momentum":
+            self.m = np.zeros(dim)
+            self.v = None
+        elif self.optimizer == "adam":
+            self.m = np.zeros(dim)
+            self.v = np.zeros(dim)
+            self.t = 0
+        else:
+            raise ValueError("optimizer phải là 'sgd', 'momentum' hoặc 'adam'.")
+
+    def _update_weights(self, grad, lr):
+        if self.optimizer == "sgd":
+            self.W -= lr * grad
+        elif self.optimizer == "momentum":
+            beta = 0.9
+            self.m = beta * self.m + (1 - beta) * grad
+            self.W -= lr * self.m
+        elif self.optimizer == "adam":
+            beta1, beta2, eps = 0.9, 0.999, 1e-8
+            self.t += 1
+            self.m = beta1 * self.m + (1 - beta1) * grad
+            self.v = beta2 * self.v + (1 - beta2) * (grad * grad)
+            m_hat = self.m / (1 - beta1 ** self.t)
+            v_hat = self.v / (1 - beta2 ** self.t)
+            self.W -= lr * m_hat / (np.sqrt(v_hat) + eps)
+
+    def fit(self, X, y, X_val=None, y_val=None):
+        rng = np.random.default_rng(self.random_state)
+        X = np.asarray(X, float)
+        y = np.asarray(y, float).reshape(-1)
+        X_ext = self._add_intercept(X)
+        n, d = X_ext.shape
+        self.W = rng.normal(0, 0.01, size=d)
+        self._init_optimizer(d)
+        self.train_loss_history = []
+        self.val_loss_history = []
+        best_loss = np.inf
+        wait = 0
+        bar = trange(self.n_epochs, desc="LogisticRegression")
+        for epoch in bar:
+            idx = rng.permutation(n)
+            Xs = X_ext[idx]
+            ys = y[idx]
+            if self.batch_size is None:
+                batches = [(0, n)]
+            else:
+                batches = [(i, min(i + self.batch_size, n))
+                           for i in range(0, n, self.batch_size)]
+            for i, j in batches:
+                xb = Xs[i:j]
+                yb = ys[i:j]
+                z = xb @ self.W
+                p = sigmoid(z)
+                err = p - yb
+                grad = xb.T @ err / len(xb)
+                if self.l2 > 0:
+                    grad[1:] += self.l2 * self.W[1:]
+                if self.l1 > 0:
+                    grad[1:] += self.l1 * np.sign(self.W[1:])
+                self._update_weights(grad, self.lr)
+            if self.lr_decay > 0:
+                self.lr *= 1.0 / (1.0 + self.lr_decay * epoch)
+            p_train = sigmoid(X_ext @ self.W)
+            train_loss = binary_cross_entropy(y, p_train)
+            self.train_loss_history.append(train_loss)
+            val_loss = None
+            if X_val is not None and y_val is not None:
+                y_val = np.asarray(y_val, float).reshape(-1)
+                p_val = self.predict_proba(X_val)
+                val_loss = binary_cross_entropy(y_val, p_val)
+                self.val_loss_history.append(val_loss)
+            monitor = val_loss if val_loss is not None else train_loss
+            bar.set_postfix(
+                {
+                    "train": f"{train_loss:.4f}",
+                    "val": "" if val_loss is None else f"{val_loss:.4f}",
+                }
+            )
+            if self.early_stopping:
+                if monitor < best_loss - 1e-6:
+                    best_loss = monitor
+                    wait = 0
+                    best_W = self.W.copy()
+                else:
+                    wait += 1
+                
+            if self.early_stopping:
+                if monitor < best_loss - 1e-6:
+                    best_loss = monitor
+                    wait = 0
+                    best_W = self.W.copy()
+                else:
+                    wait += 1
+                if wait >= self.patience:
+                    bar.write(
+                        f"[Early stopping] quá trình huấn luyện dừng lại tại epoch {epoch + 1} | "
+                        f"best_loss = {best_loss:.4f}"
+                    )
+                    if "best_W" in locals():
+                        self.W = best_W
+                    break
 
 
-# ============================================================
-# 5. K-FOLD CROSS-VALIDATION CHO LOGISTIC REGRESSION
-# ============================================================
+    def predict_proba(self, X):
+        X_ext = self._add_intercept(X)
+        return sigmoid(X_ext @ self.W)
 
-def k_fold_indices(n_samples, k=5, shuffle=True, random_state=RANDOM_STATE):
-    """
-    Tạo index cho K-fold cross-validation.
+    def predict(self, X, threshold=0.5):
+        p = self.predict_proba(X)
+        return (p >= threshold).astype(int)
 
-    Returns
-    -------
-    folds : list of (train_idx, val_idx)
-    """
-    indices = np.arange(n_samples)
-    if shuffle:
-        rng = np.random.default_rng(random_state)
-        rng.shuffle(indices)
+# RANDOM FOREST
+def gini_impurity(y):
+    y = np.asarray(y).astype(int)
+    if y.size == 0:
+        return 0.0
+    classes, counts = np.unique(y, return_counts=True)
+    p = counts / counts.sum()
+    return 1.0 - np.sum(p * p)
 
-    fold_sizes = np.full(k, n_samples // k, dtype=int)
-    fold_sizes[: n_samples % k] += 1  # chia đều phần dư
+def gini_split(col, y, threshold):
+    col = np.asarray(col)
+    y = np.asarray(y).astype(int)
+    left = col <= threshold
+    right = ~left
+    n = len(y)
+    n_left = left.sum()
+    n_right = right.sum()
+    if n_left == 0 or n_right == 0:
+        return np.inf
+    g_left = gini_impurity(y[left])
+    g_right = gini_impurity(y[right])
+    return (n_left * g_left + n_right * g_right) / n
 
-    folds = []
-    current = 0
-    for fold_size in fold_sizes:
-        start, stop = current, current + fold_size
-        val_idx = indices[start:stop]
-        train_idx = np.concatenate([indices[:start], indices[stop:]])
-        folds.append((train_idx, val_idx))
-        current = stop
+class DecisionTree:
+    def __init__(self, max_depth=5, min_samples_split=5, random_state=42):
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.random_state = random_state
+        self.feature = None
+        self.threshold = None
+        self.left = None
+        self.right = None
+        self.pred = None
 
-    return folds
-
-
-def cross_val_logistic(
-    X,
-    y,
-    k=5,
-    lr=0.1,
-    n_epochs=1000,
-    l2=0.0,
-    fit_intercept=True,
-    verbose=False,
-    random_state=RANDOM_STATE,
-    threshold=0.5,
-):
-    """
-    Thực hiện K-fold cross-validation cho LogisticRegressionBinary.
-
-    Parameters
-    ----------
-    X, y : dữ liệu đầy đủ
-    k : số folds
-    Các tham số còn lại truyền cho LogisticRegressionBinary.
-
-    Returns
-    -------
-    results : dict
-        - "accuracy", "precision", "recall", "f1": trung bình trên các folds
-        - "fold_metrics": danh sách metric từng fold
-    """
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=float).reshape(-1)
-
-    n_samples = X.shape[0]
-    folds = k_fold_indices(n_samples, k=k, shuffle=True, random_state=random_state)
-
-    fold_metrics = []
-
-    for fold_i, (train_idx, val_idx) in enumerate(folds):
-        X_train, y_train = X[train_idx], y[train_idx]
-        X_val, y_val = X[val_idx], y[val_idx]
-
-        clf = LogisticRegressionBinary(
-            lr=lr,
-            n_epochs=n_epochs,
-            l2=l2,
-            fit_intercept=fit_intercept,
-            verbose=verbose,
-            random_state=random_state + fold_i,  # đổi seed nhẹ
+    def fit(self, X, y, depth=0):
+        X = np.asarray(X, float)
+        y = np.asarray(y).astype(int)
+        if y.size == 0:
+            self.pred = 0
+            return
+        counts = np.bincount(y)
+        self.pred = counts.argmax()
+        if depth >= self.max_depth:
+            return
+        if y.size < self.min_samples_split:
+            return
+        if gini_impurity(y) == 0.0:
+            return
+        n_samples, n_features = X.shape
+        best_feat = None
+        best_thresh = None
+        best_gini = np.inf
+        for f in range(n_features):
+            col = X[:, f]
+            thresholds = np.unique(col)
+            for th in thresholds:
+                g = gini_split(col, y, th)
+                if g < best_gini:
+                    best_gini = g
+                    best_feat = f
+                    best_thresh = th
+        if best_feat is None:
+            return
+        self.feature = best_feat
+        self.threshold = best_thresh
+        left_mask = X[:, best_feat] <= best_thresh
+        right_mask = ~left_mask
+        self.left = DecisionTree(
+            max_depth=self.max_depth,
+            min_samples_split=self.min_samples_split,
+            random_state=self.random_state + 1,
         )
-        clf.fit(X_train, y_train)
-        y_val_prob = clf.predict_proba(X_val)
-        metrics = evaluate_binary_classification(
-            y_true=y_val,
-            y_prob=y_val_prob,
-            threshold=threshold,
-            positive_label=1,
+        self.left.fit(X[left_mask], y[left_mask], depth + 1)
+        self.right = DecisionTree(
+            max_depth=self.max_depth,
+            min_samples_split=self.min_samples_split,
+            random_state=self.random_state + 2,
         )
-        fold_metrics.append(metrics)
+        self.right.fit(X[right_mask], y[right_mask], depth + 1)
 
-    accs = [m["accuracy"] for m in fold_metrics]
-    precs = [m["precision"] for m in fold_metrics]
-    recs = [m["recall"] for m in fold_metrics]
-    f1s = [m["f1"] for m in fold_metrics]
+    def predict_row(self, x):
+        if self.feature is None:
+            return self.pred
+        if x[self.feature] <= self.threshold:
+            return self.left.predict_row(x)
+        else:
+            return self.right.predict_row(x)
 
-    results = {
-        "accuracy": float(np.mean(accs)),
-        "precision": float(np.mean(precs)),
-        "recall": float(np.mean(recs)),
-        "f1": float(np.mean(f1s)),
-        "fold_metrics": fold_metrics,
-    }
-    return results
+    def predict(self, X):
+        X = np.asarray(X, float)
+        return np.array([self.predict_row(row) for row in X], dtype=int)
+
+class RandomForest:
+    def __init__(
+        self,
+        n_estimators=50,
+        max_depth=5,
+        max_features="sqrt",
+        min_samples_split=5,
+        random_state=42,
+    ):
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.max_features = max_features
+        self.min_samples_split = min_samples_split
+        self.random_state = random_state
+        self.trees = []
+        self.feature_subsets = []
+        self.train_loss_history = []
+        self.val_loss_history = []
+
+    def _sample_features(self, n_features, rng):
+        if self.max_features == "sqrt":
+            k = max(1, int(np.sqrt(n_features)))
+        elif self.max_features == "all":
+            k = n_features
+        elif isinstance(self.max_features, int):
+            k = min(n_features, self.max_features)
+        else:
+            k = n_features
+        return rng.choice(n_features, size=k, replace=False)
+
+    def fit(self, X, y, X_val=None, y_val=None):
+        X = np.asarray(X, float)
+        y = np.asarray(y).astype(int)
+        if X_val is not None and y_val is not None:
+            X_val = np.asarray(X_val, float)
+            y_val = np.asarray(y_val).astype(int)
+        rng = np.random.default_rng(self.random_state)
+        n_samples, n_features = X.shape
+        self.trees = []
+        self.feature_subsets = []
+        self.train_loss_history = []
+        self.val_loss_history = []
+        bar = trange(self.n_estimators, desc="RandomForest", leave=True)
+        for i in bar:
+            idx = rng.choice(n_samples, size=n_samples, replace=True)
+            Xb = X[idx]
+            yb = y[idx]
+            feats = self._sample_features(n_features, rng)
+            self.feature_subsets.append(feats)
+            tree = DecisionTree(
+                max_depth=self.max_depth,
+                min_samples_split=self.min_samples_split,
+                random_state=self.random_state + i,
+            )
+            tree.fit(Xb[:, feats], yb)
+            self.trees.append(tree)
+            preds_train = []
+            for t_, f_ in zip(self.trees, self.feature_subsets):
+                preds_train.append(t_.predict(X[:, f_]))
+            preds_train = np.array(preds_train)
+            p_train = preds_train.mean(axis=0)
+            train_loss = binary_cross_entropy(y, p_train)
+            self.train_loss_history.append(train_loss)
+            val_loss = None
+            if X_val is not None and y_val is not None:
+                preds_val = []
+                for t_, f_ in zip(self.trees, self.feature_subsets):
+                    preds_val.append(t_.predict(X_val[:, f_]))
+                preds_val = np.array(preds_val)
+                p_val = preds_val.mean(axis=0)
+                val_loss = binary_cross_entropy(y_val, p_val)
+                self.val_loss_history.append(val_loss)
+            bar.set_postfix(
+                {
+                    "train": f"{train_loss:.4f}",
+                    "val": "" if val_loss is None else f"{val_loss:.4f}",
+                }
+            )
+
+    def predict(self, X):
+        X = np.asarray(X, float)
+        if not self.trees:
+            raise ValueError("RandomForest chưa được fit.")
+        preds = []
+        for tree, feats in zip(self.trees, self.feature_subsets):
+            preds.append(tree.predict(X[:, feats]))
+        preds = np.array(preds)
+        def majority(col):
+            counts = np.bincount(col.astype(int))
+            return counts.argmax()
+        return np.apply_along_axis(majority, 0, preds).astype(int)
+
+    def predict_proba(self, X):
+        X = np.asarray(X, float)
+        preds = []
+        for tree, feats in zip(self.trees, self.feature_subsets):
+            preds.append(tree.predict(X[:, feats]))
+        preds = np.array(preds)
+        return preds.mean(axis=0)
+
+# XGBOOST 
+def logistic_grad_hess(y_true, margin):
+    y_true = np.asarray(y_true, float).reshape(-1)
+    margin = np.asarray(margin, float).reshape(-1)
+    p = sigmoid(margin)
+    g = p - y_true
+    h = p * (1.0 - p)
+    return g, h
+
+class RegressionTree:
+    def __init__(
+        self,
+        max_depth=3,
+        lambda_reg=1.0,
+        min_child_weight=1e-3,
+        min_gain_to_split=0.0,
+        random_state=42,
+    ):
+        self.max_depth = max_depth
+        self.lambda_reg = lambda_reg
+        self.min_child_weight = min_child_weight
+        self.min_gain_to_split = min_gain_to_split
+        self.random_state = random_state
+        self.feature = None
+        self.threshold = None
+        self.left = None
+        self.right = None
+        self.pred = None
+
+    def _weight(self, G, H):
+        return -G / (H + self.lambda_reg + 1e-12)
+
+    def _gain(self, Gl, Hl, Gr, Hr):
+        return 0.5 * (
+            (Gl * Gl) / (Hl + self.lambda_reg + 1e-12)
+            + (Gr * Gr) / (Hr + self.lambda_reg + 1e-12)
+        )
+
+    def fit(self, X, g, h, depth=0):
+        X = np.asarray(X, float)
+        g = np.asarray(g, float).reshape(-1)
+        h = np.asarray(h, float).reshape(-1)
+        G = g.sum()
+        H = h.sum()
+        self.pred = self._weight(G, H)
+        if depth >= self.max_depth or X.shape[0] <= 1:
+            return
+        n_samples, n_features = X.shape
+        best_gain = 0.0
+        best_feat = None
+        best_thresh = None
+        for f in range(n_features):
+            col = X[:, f]
+            thresholds = np.unique(col)
+            for th in thresholds:
+                left = col <= th
+                right = ~left
+                if left.sum() == 0 or right.sum() == 0:
+                    continue
+                Gl = g[left].sum()
+                Hl = h[left].sum()
+                Gr = g[right].sum()
+                Hr = h[right].sum()
+                if Hl < self.min_child_weight or Hr < self.min_child_weight:
+                    continue
+                gain = self._gain(Gl, Hl, Gr, Hr)
+                if gain > best_gain:
+                    best_gain = gain
+                    best_feat = f
+                    best_thresh = th
+        if best_feat is None or best_gain < self.min_gain_to_split:
+            return
+        self.feature = best_feat
+        self.threshold = best_thresh
+        left = X[:, best_feat] <= best_thresh
+        right = ~left
+        self.left = RegressionTree(
+            max_depth=self.max_depth,
+            lambda_reg=self.lambda_reg,
+            min_child_weight=self.min_child_weight,
+            min_gain_to_split=self.min_gain_to_split,
+            random_state=self.random_state + 1,
+        )
+        self.left.fit(X[left], g[left], h[left], depth + 1)
+        self.right = RegressionTree(
+            max_depth=self.max_depth,
+            lambda_reg=self.lambda_reg,
+            min_child_weight=self.min_child_weight,
+            min_gain_to_split=self.min_gain_to_split,
+            random_state=self.random_state + 2,
+        )
+        self.right.fit(X[right], g[right], h[right], depth + 1)
+
+    def predict_row(self, x):
+        if self.feature is None:
+            return self.pred
+        if x[self.feature] <= self.threshold:
+            return self.left.predict_row(x)
+        else:
+            return self.right.predict_row(x)
+
+    def predict(self, X):
+        X = np.asarray(X, float)
+        return np.array([self.predict_row(row) for row in X], dtype=float)
+
+class XGBoost:
+    def __init__(
+        self,
+        n_rounds=50,
+        max_depth=3,
+        learning_rate=0.1,
+        lambda_reg=1.0,
+        subsample=1.0,
+        colsample_bytree=1.0,
+        min_child_weight=1e-3,
+        min_gain_to_split=0.0,
+        early_stopping=False,
+        patience=20,
+        random_state=42,
+    ):
+        self.n_rounds = n_rounds
+        self.max_depth = max_depth
+        self.learning_rate = learning_rate
+        self.lambda_reg = lambda_reg
+        self.subsample = subsample
+        self.colsample_bytree = colsample_bytree
+        self.min_child_weight = min_child_weight
+        self.min_gain_to_split = min_gain_to_split
+        self.early_stopping = early_stopping
+        self.patience = patience
+        self.random_state = random_state
+        self.trees = []
+        self.feature_subsets = []
+        self.train_loss_history = []
+        self.val_loss_history = []
+
+    def fit(self, X, y, X_val=None, y_val=None):
+        X = np.asarray(X, float)
+        y = np.asarray(y, float).reshape(-1)
+        n_samples, n_features = X.shape
+        self.trees = []
+        self.feature_subsets = []
+        self.train_loss_history = []
+        self.val_loss_history = []
+        F = np.zeros(n_samples, float)
+        if X_val is not None and y_val is not None:
+            X_val = np.asarray(X_val, float)
+            y_val = np.asarray(y_val, float).reshape(-1)
+            F_val = np.zeros(X_val.shape[0], float)
+        else:
+            F_val = None
+        rng = np.random.default_rng(self.random_state)
+        best_loss = np.inf
+        wait = 0
+        bar = trange(self.n_rounds, desc="XGBoost")
+        for t in bar:
+            g, h = logistic_grad_hess(y, F)
+            if self.subsample < 1.0:
+                m = max(1, int(self.subsample * n_samples))
+                idx_row = rng.choice(n_samples, size=m, replace=False)
+            else:
+                idx_row = np.arange(n_samples)
+            if self.colsample_bytree < 1.0:
+                k = max(1, int(self.colsample_bytree * n_features))
+                idx_col = rng.choice(n_features, size=k, replace=False)
+            else:
+                idx_col = np.arange(n_features)
+            X_sub = X[idx_row][:, idx_col]
+            g_sub = g[idx_row]
+            h_sub = h[idx_row]
+            tree = RegressionTree(
+                max_depth=self.max_depth,
+                lambda_reg=self.lambda_reg,
+                min_child_weight=self.min_child_weight,
+                min_gain_to_split=self.min_gain_to_split,
+                random_state=self.random_state + t,
+            )
+            tree.fit(X_sub, g_sub, h_sub, depth=0)
+            self.trees.append(tree)
+            self.feature_subsets.append(idx_col)
+            F += self.learning_rate * tree.predict(X[:, idx_col])
+            p_train = sigmoid(F)
+            train_loss = binary_cross_entropy(y, p_train)
+            self.train_loss_history.append(train_loss)
+            val_loss = None
+            if X_val is not None:
+                F_val += self.learning_rate * tree.predict(X_val[:, idx_col])
+                p_val = sigmoid(F_val)
+                val_loss = binary_cross_entropy(y_val, p_val)
+                self.val_loss_history.append(val_loss)
+            monitor = val_loss if val_loss is not None else train_loss
+            bar.set_postfix(
+                {
+                    "train": f"{train_loss:.4f}",
+                    "val": "" if val_loss is None else f"{val_loss:.4f}",
+                }
+            )
+            if self.early_stopping:
+                if monitor < best_loss - 1e-6:
+                    best_loss = monitor
+                    wait = 0
+                    best_t = len(self.trees)
+                else:
+                    wait += 1
+                if wait >= self.patience:
+                    bar.write(
+                        f"[Early stopping] XGBoost dừng tại round {t + 1} | "
+                        f"best_val_loss = {best_loss:.4f}, "
+                        f"số cây dùng thực tế = {best_t}"
+                    )
+                    if "best_t" in locals():
+                        self.trees = self.trees[:best_t]
+                        self.feature_subsets = self.feature_subsets[:best_t]
+                    break
+
+    def _predict_margin(self, X):
+        X = np.asarray(X, float)
+        n_samples = X.shape[0]
+        F = np.zeros(n_samples, float)
+        for tree, feats in zip(self.trees, self.feature_subsets):
+            F += self.learning_rate * tree.predict(X[:, feats])
+        return F
+
+    def predict_proba(self, X):
+        F = self._predict_margin(X)
+        return sigmoid(F)
+
+    def predict(self, X, threshold=0.5):
+        p = self.predict_proba(X)
+        return (p >= threshold).astype(int)
