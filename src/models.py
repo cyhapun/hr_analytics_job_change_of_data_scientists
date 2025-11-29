@@ -47,13 +47,14 @@ def load_xy_from_clean_csv(csv_path, target_col="target"):
     if target_col not in header:
         raise ValueError(f"Không thấy cột target '{target_col}'.")
     t_idx = header.index(target_col)
+
     y_raw = data_str[:, t_idx]
-    y = np.array([float(v) for v in y_raw], dtype=float)
+    y = y_raw.astype(float)
+
     feat_idx = [i for i in range(len(header)) if i != t_idx]
     X_raw = data_str[:, feat_idx]
-    X = np.zeros_like(X_raw, dtype=float)
-    for j in range(X_raw.shape[1]):
-        X[:, j] = np.array([float(z) for z in X_raw[:, j]], dtype=float)
+    X = X_raw.astype(float)
+
     feat_names = [header[i] for i in feat_idx]
     return X, y, feat_names
 
@@ -171,6 +172,7 @@ class LogisticRegression:
         self.early_stopping = early_stopping
         self.patience = patience
         self.random_state = random_state
+
         self.W = None
         self.train_loss_history = []
         self.val_loss_history = []
@@ -211,49 +213,66 @@ class LogisticRegression:
 
     def fit(self, X, y, X_val=None, y_val=None):
         rng = np.random.default_rng(self.random_state)
+
         X = np.asarray(X, float)
         y = np.asarray(y, float).reshape(-1)
+
         X_ext = self._add_intercept(X)
         n, d = X_ext.shape
+
         self.W = rng.normal(0, 0.01, size=d)
         self._init_optimizer(d)
+
         self.train_loss_history = []
         self.val_loss_history = []
+
         best_loss = np.inf
         wait = 0
+
         bar = trange(self.n_epochs, desc="LogisticRegression")
         for epoch in bar:
             idx = rng.permutation(n)
             Xs = X_ext[idx]
             ys = y[idx]
+
             if self.batch_size is None:
                 batches = [(0, n)]
             else:
                 batches = [(i, min(i + self.batch_size, n))
                            for i in range(0, n, self.batch_size)]
+
             for i, j in batches:
                 xb = Xs[i:j]
                 yb = ys[i:j]
+
                 z = xb @ self.W
                 p = sigmoid(z)
                 err = p - yb
-                grad = xb.T @ err / len(xb)
+
+                # dùng np.einsum cho gradient: grad_j = (1/m) * sum_i xb_ij * err_i
+                grad = np.einsum("ij,i->j", xb, err) / xb.shape[0]
+
                 if self.l2 > 0:
                     grad[1:] += self.l2 * self.W[1:]
                 if self.l1 > 0:
                     grad[1:] += self.l1 * np.sign(self.W[1:])
+
                 self._update_weights(grad, self.lr)
+
             if self.lr_decay > 0:
                 self.lr *= 1.0 / (1.0 + self.lr_decay * epoch)
+
             p_train = sigmoid(X_ext @ self.W)
             train_loss = binary_cross_entropy(y, p_train)
             self.train_loss_history.append(train_loss)
+
             val_loss = None
             if X_val is not None and y_val is not None:
                 y_val = np.asarray(y_val, float).reshape(-1)
                 p_val = self.predict_proba(X_val)
                 val_loss = binary_cross_entropy(y_val, p_val)
                 self.val_loss_history.append(val_loss)
+
             monitor = val_loss if val_loss is not None else train_loss
             bar.set_postfix(
                 {
@@ -261,14 +280,7 @@ class LogisticRegression:
                     "val": "" if val_loss is None else f"{val_loss:.4f}",
                 }
             )
-            if self.early_stopping:
-                if monitor < best_loss - 1e-6:
-                    best_loss = monitor
-                    wait = 0
-                    best_W = self.W.copy()
-                else:
-                    wait += 1
-                
+
             if self.early_stopping:
                 if monitor < best_loss - 1e-6:
                     best_loss = monitor
@@ -284,7 +296,6 @@ class LogisticRegression:
                     if "best_W" in locals():
                         self.W = best_W
                     break
-
 
     def predict_proba(self, X):
         X_ext = self._add_intercept(X)
@@ -306,15 +317,19 @@ def gini_impurity(y):
 def gini_split(col, y, threshold):
     col = np.asarray(col)
     y = np.asarray(y).astype(int)
+
     left = col <= threshold
     right = ~left
+
     n = len(y)
     n_left = left.sum()
     n_right = right.sum()
     if n_left == 0 or n_right == 0:
         return np.inf
+
     g_left = gini_impurity(y[left])
     g_right = gini_impurity(y[right])
+
     return (n_left * g_left + n_right * g_right) / n
 
 class DecisionTree:
@@ -322,6 +337,7 @@ class DecisionTree:
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.random_state = random_state
+
         self.feature = None
         self.threshold = None
         self.left = None
@@ -331,21 +347,26 @@ class DecisionTree:
     def fit(self, X, y, depth=0):
         X = np.asarray(X, float)
         y = np.asarray(y).astype(int)
+
         if y.size == 0:
             self.pred = 0
             return
+
         counts = np.bincount(y)
         self.pred = counts.argmax()
+
         if depth >= self.max_depth:
             return
         if y.size < self.min_samples_split:
             return
         if gini_impurity(y) == 0.0:
             return
+
         n_samples, n_features = X.shape
         best_feat = None
         best_thresh = None
         best_gini = np.inf
+
         for f in range(n_features):
             col = X[:, f]
             thresholds = np.unique(col)
@@ -355,18 +376,23 @@ class DecisionTree:
                     best_gini = g
                     best_feat = f
                     best_thresh = th
+
         if best_feat is None:
             return
+
         self.feature = best_feat
         self.threshold = best_thresh
+
         left_mask = X[:, best_feat] <= best_thresh
         right_mask = ~left_mask
+
         self.left = DecisionTree(
             max_depth=self.max_depth,
             min_samples_split=self.min_samples_split,
             random_state=self.random_state + 1,
         )
         self.left.fit(X[left_mask], y[left_mask], depth + 1)
+
         self.right = DecisionTree(
             max_depth=self.max_depth,
             min_samples_split=self.min_samples_split,
@@ -400,6 +426,7 @@ class RandomForest:
         self.max_features = max_features
         self.min_samples_split = min_samples_split
         self.random_state = random_state
+
         self.trees = []
         self.feature_subsets = []
         self.train_loss_history = []
@@ -419,22 +446,28 @@ class RandomForest:
     def fit(self, X, y, X_val=None, y_val=None):
         X = np.asarray(X, float)
         y = np.asarray(y).astype(int)
+
         if X_val is not None and y_val is not None:
             X_val = np.asarray(X_val, float)
             y_val = np.asarray(y_val).astype(int)
+
         rng = np.random.default_rng(self.random_state)
         n_samples, n_features = X.shape
+
         self.trees = []
         self.feature_subsets = []
         self.train_loss_history = []
         self.val_loss_history = []
+
         bar = trange(self.n_estimators, desc="RandomForest", leave=True)
         for i in bar:
             idx = rng.choice(n_samples, size=n_samples, replace=True)
             Xb = X[idx]
             yb = y[idx]
+
             feats = self._sample_features(n_features, rng)
             self.feature_subsets.append(feats)
+
             tree = DecisionTree(
                 max_depth=self.max_depth,
                 min_samples_split=self.min_samples_split,
@@ -442,22 +475,24 @@ class RandomForest:
             )
             tree.fit(Xb[:, feats], yb)
             self.trees.append(tree)
-            preds_train = []
-            for t_, f_ in zip(self.trees, self.feature_subsets):
-                preds_train.append(t_.predict(X[:, f_]))
-            preds_train = np.array(preds_train)
+
+            # tính p_train: trung bình dự đoán các cây
+            preds_train = np.array([
+                t_.predict(X[:, f_]) for t_, f_ in zip(self.trees, self.feature_subsets)
+            ])
             p_train = preds_train.mean(axis=0)
             train_loss = binary_cross_entropy(y, p_train)
             self.train_loss_history.append(train_loss)
+
             val_loss = None
             if X_val is not None and y_val is not None:
-                preds_val = []
-                for t_, f_ in zip(self.trees, self.feature_subsets):
-                    preds_val.append(t_.predict(X_val[:, f_]))
-                preds_val = np.array(preds_val)
+                preds_val = np.array([
+                    t_.predict(X_val[:, f_]) for t_, f_ in zip(self.trees, self.feature_subsets)
+                ])
                 p_val = preds_val.mean(axis=0)
                 val_loss = binary_cross_entropy(y_val, p_val)
                 self.val_loss_history.append(val_loss)
+
             bar.set_postfix(
                 {
                     "train": f"{train_loss:.4f}",
@@ -469,24 +504,25 @@ class RandomForest:
         X = np.asarray(X, float)
         if not self.trees:
             raise ValueError("RandomForest chưa được fit.")
-        preds = []
-        for tree, feats in zip(self.trees, self.feature_subsets):
-            preds.append(tree.predict(X[:, feats]))
-        preds = np.array(preds)
+
+        preds = np.array([
+            tree.predict(X[:, feats]) for tree, feats in zip(self.trees, self.feature_subsets)
+        ])
+
         def majority(col):
             counts = np.bincount(col.astype(int))
             return counts.argmax()
+
         return np.apply_along_axis(majority, 0, preds).astype(int)
 
     def predict_proba(self, X):
         X = np.asarray(X, float)
-        preds = []
-        for tree, feats in zip(self.trees, self.feature_subsets):
-            preds.append(tree.predict(X[:, feats]))
-        preds = np.array(preds)
+        preds = np.array([
+            tree.predict(X[:, feats]) for tree, feats in zip(self.trees, self.feature_subsets)
+        ])
         return preds.mean(axis=0)
 
-# XGBOOST 
+# XGBOOST
 def logistic_grad_hess(y_true, margin):
     y_true = np.asarray(y_true, float).reshape(-1)
     margin = np.asarray(margin, float).reshape(-1)
@@ -509,6 +545,7 @@ class RegressionTree:
         self.min_child_weight = min_child_weight
         self.min_gain_to_split = min_gain_to_split
         self.random_state = random_state
+
         self.feature = None
         self.threshold = None
         self.left = None
@@ -528,40 +565,52 @@ class RegressionTree:
         X = np.asarray(X, float)
         g = np.asarray(g, float).reshape(-1)
         h = np.asarray(h, float).reshape(-1)
+
         G = g.sum()
         H = h.sum()
         self.pred = self._weight(G, H)
+
         if depth >= self.max_depth or X.shape[0] <= 1:
             return
+
         n_samples, n_features = X.shape
         best_gain = 0.0
         best_feat = None
         best_thresh = None
+
         for f in range(n_features):
             col = X[:, f]
             thresholds = np.unique(col)
             for th in thresholds:
                 left = col <= th
                 right = ~left
+
                 if left.sum() == 0 or right.sum() == 0:
                     continue
+
                 Gl = g[left].sum()
                 Hl = h[left].sum()
                 Gr = g[right].sum()
                 Hr = h[right].sum()
+
                 if Hl < self.min_child_weight or Hr < self.min_child_weight:
                     continue
+
                 gain = self._gain(Gl, Hl, Gr, Hr)
                 if gain > best_gain:
                     best_gain = gain
                     best_feat = f
                     best_thresh = th
+
         if best_feat is None or best_gain < self.min_gain_to_split:
             return
+
         self.feature = best_feat
         self.threshold = best_thresh
+
         left = X[:, best_feat] <= best_thresh
         right = ~left
+
         self.left = RegressionTree(
             max_depth=self.max_depth,
             lambda_reg=self.lambda_reg,
@@ -570,6 +619,7 @@ class RegressionTree:
             random_state=self.random_state + 1,
         )
         self.left.fit(X[left], g[left], h[left], depth + 1)
+
         self.right = RegressionTree(
             max_depth=self.max_depth,
             lambda_reg=self.lambda_reg,
@@ -617,6 +667,7 @@ class XGBoost:
         self.early_stopping = early_stopping
         self.patience = patience
         self.random_state = random_state
+
         self.trees = []
         self.feature_subsets = []
         self.train_loss_history = []
@@ -626,36 +677,45 @@ class XGBoost:
         X = np.asarray(X, float)
         y = np.asarray(y, float).reshape(-1)
         n_samples, n_features = X.shape
+
         self.trees = []
         self.feature_subsets = []
         self.train_loss_history = []
         self.val_loss_history = []
+
         F = np.zeros(n_samples, float)
+
         if X_val is not None and y_val is not None:
             X_val = np.asarray(X_val, float)
             y_val = np.asarray(y_val, float).reshape(-1)
             F_val = np.zeros(X_val.shape[0], float)
         else:
             F_val = None
+
         rng = np.random.default_rng(self.random_state)
         best_loss = np.inf
         wait = 0
+
         bar = trange(self.n_rounds, desc="XGBoost")
         for t in bar:
             g, h = logistic_grad_hess(y, F)
+
             if self.subsample < 1.0:
                 m = max(1, int(self.subsample * n_samples))
                 idx_row = rng.choice(n_samples, size=m, replace=False)
             else:
                 idx_row = np.arange(n_samples)
+
             if self.colsample_bytree < 1.0:
                 k = max(1, int(self.colsample_bytree * n_features))
                 idx_col = rng.choice(n_features, size=k, replace=False)
             else:
                 idx_col = np.arange(n_features)
+
             X_sub = X[idx_row][:, idx_col]
             g_sub = g[idx_row]
             h_sub = h[idx_row]
+
             tree = RegressionTree(
                 max_depth=self.max_depth,
                 lambda_reg=self.lambda_reg,
@@ -664,18 +724,23 @@ class XGBoost:
                 random_state=self.random_state + t,
             )
             tree.fit(X_sub, g_sub, h_sub, depth=0)
+
             self.trees.append(tree)
             self.feature_subsets.append(idx_col)
+
             F += self.learning_rate * tree.predict(X[:, idx_col])
+
             p_train = sigmoid(F)
             train_loss = binary_cross_entropy(y, p_train)
             self.train_loss_history.append(train_loss)
+
             val_loss = None
             if X_val is not None:
                 F_val += self.learning_rate * tree.predict(X_val[:, idx_col])
                 p_val = sigmoid(F_val)
                 val_loss = binary_cross_entropy(y_val, p_val)
                 self.val_loss_history.append(val_loss)
+
             monitor = val_loss if val_loss is not None else train_loss
             bar.set_postfix(
                 {
@@ -683,6 +748,7 @@ class XGBoost:
                     "val": "" if val_loss is None else f"{val_loss:.4f}",
                 }
             )
+
             if self.early_stopping:
                 if monitor < best_loss - 1e-6:
                     best_loss = monitor
