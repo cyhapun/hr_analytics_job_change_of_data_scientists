@@ -148,7 +148,6 @@ def summarize_missing(data, header=None, extra_tokens=None):
 def string_column_to_float(col, missing_tokens=MISSING_TOKENS):
     """
     Chuyển một cột str → float, các giá trị thuộc missing_tokens → np.nan.
-    Dùng build_missing_mask để vectorized.
     """
     col = np.asarray(col, dtype=str)
     mask_missing = build_missing_mask(col, missing_tokens=missing_tokens)
@@ -224,7 +223,6 @@ def knn_impute_categorical(
     - Chuẩn hoá feature_matrix (z-score).
     - Với mỗi dòng missing trong target_col, tìm k hàng gần nhất (theo L2)
       rồi chọn mode của target_col các hàng này.
-    Lưu ý: ở đây vẫn phải loop trên từng missing-row (bản chất thuật toán KNN).
     """
     target_col = np.asarray(target_col, dtype=str)
     norm = _normalize_str_array(target_col)
@@ -305,66 +303,78 @@ def kmeans_impute_city_training(
         centroids = np.array([[mean_city, mean_train]])
         return city_imp, train_imp, centroids
 
-    X_full = X[mask_full]
+    X_full = X[mask_full]          # (m, 2)
     m = X_full.shape[0]
 
     if k > m:
         k = m
+
+    # Khởi tạo centroid
     init_idx = rng.choice(m, size=k, replace=False)
-    centroids = X_full[init_idx].copy()
+    centroids = X_full[init_idx].copy()   # (k, 2)
 
-    # Vòng lặp K-means (vectorized theo toàn bộ X_full)
+    # Vòng lặp K-means
     for _ in range(max_iter):
-        # diff: (m, k, 2), dists: (m, k)
-        diff = X_full[:, None, :] - centroids[None, :, :]
-        dists = np.einsum("ijk,ijk->ij", diff, diff)
-        labels = np.argmin(dists, axis=1)
+        # Tính khoảng cách L2 từ mỗi điểm tới mỗi centroid
+        diff = X_full[:, None, :] - centroids[None, :, :]   # (m, k, 2)
+        dists = np.einsum("ijk,ijk->ij", diff, diff)        # (m, k)
+        labels = np.argmin(dists, axis=1)                   # (m,)
 
+        # Tính tổng vector & số lượng cho từng cluster
+        counts = np.bincount(labels, minlength=k)           # (k,)
+        sums = np.zeros((k, 2), dtype=X_full.dtype)
+        np.add.at(sums, labels, X_full)                     # cộng dồn theo label
+
+        nonzero = counts > 0
         new_centroids = centroids.copy()
-        for j in range(k):
-            members = X_full[labels == j]
-            if members.shape[0] > 0:
-                new_centroids[j] = members.mean(axis=0)
-            else:
-                # Nếu cluster rỗng, random 1 điểm làm centroid mới
-                ridx = rng.integers(0, m)
-                new_centroids[j] = X_full[ridx]
+        # Cập nhật centroid cho cluster có member
+        new_centroids[nonzero] = sums[nonzero] / counts[nonzero, None]
 
+        # Cụm rỗng → gán ngẫu nhiên một điểm
+        empty = ~nonzero
+        if np.any(empty):
+            rand_idx = rng.integers(0, m, size=int(empty.sum()))
+            new_centroids[empty] = X_full[rand_idx]
+
+        # Kiểm tra hội tụ
         shift = np.sqrt(np.sum((new_centroids - centroids) ** 2))
         centroids = new_centroids
         if shift < tol:
             break
 
+    # Dùng labels cuối cùng để chọn cluster đông nhất
     counts = np.bincount(labels, minlength=k)
     major_cluster = int(np.argmax(counts))
 
     city_filled = city.copy()
     training_filled = train.copy()
 
-    # Điền lại cho tất cả các hàng có missing (loop theo bản ghi)
-    for i in range(n):
-        c_nan = mask_city_nan[i]
-        t_nan = mask_train_nan[i]
+    # Các mask cho pattern missing
+    mask_both = mask_city_nan & mask_train_nan
+    mask_only_city = mask_city_nan & ~mask_train_nan
+    mask_only_train = ~mask_city_nan & mask_train_nan
 
-        if not c_nan and not t_nan:
-            continue
+    # 1 Missing cả 2 → centroid của major_cluster
+    if np.any(mask_both):
+        city_filled[mask_both] = centroids[major_cluster, 0]
+        training_filled[mask_both] = centroids[major_cluster, 1]
 
-        if c_nan and t_nan:
-            # Thiếu cả 2 → gán cluster đông nhất
-            cluster = major_cluster
-            city_filled[i] = centroids[cluster, 0]
-            training_filled[i] = centroids[cluster, 1]
-        else:
-            if c_nan and not t_nan:
-                known_val = training_filled[i]
-                d1 = (centroids[:, 1] - known_val) ** 2
-                cluster = int(np.argmin(d1))
-                city_filled[i] = centroids[cluster, 0]
-            elif t_nan and not c_nan:
-                known_val = city_filled[i]
-                d0 = (centroids[:, 0] - known_val) ** 2
-                cluster = int(np.argmin(d0))
-                training_filled[i] = centroids[cluster, 1]
+    # 2 Missing city, biết training → gán theo khoảng cách trên trục training_hours
+    if np.any(mask_only_city):
+        known_train = training_filled[mask_only_city]       # (n1,)
+        # dists: (n1, k)
+        diff_train = known_train.reshape(-1, 1) - centroids[None, :, 1]
+        dists_train = diff_train ** 2
+        cluster_idx = np.argmin(dists_train, axis=1)        # (n1,)
+        city_filled[mask_only_city] = centroids[cluster_idx, 0]
+
+    # 3 Missing training, biết city → gán theo khoảng cách trên trục city_development_index
+    if np.any(mask_only_train):
+        known_city = city_filled[mask_only_train]           # (n2,)
+        diff_city = known_city.reshape(-1, 1) - centroids[None, :, 0]
+        dists_city = diff_city ** 2
+        cluster_idx = np.argmin(dists_city, axis=1)         # (n2,)
+        training_filled[mask_only_train] = centroids[cluster_idx, 1]
 
     return city_filled, training_filled, centroids
 
