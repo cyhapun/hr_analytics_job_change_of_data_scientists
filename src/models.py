@@ -1,16 +1,34 @@
 import numpy as np
 from tqdm import trange
 
+# ==============================
+# Các HÀM CƠ BẢN CHO MÔ HÌNH & METRIC
 def sigmoid(z):
+    """
+    Hàm sigmoid ổn định số học:
+    - Clip z để tránh overflow trong exp(-z)
+    """
     z = np.clip(z, -500, 500)
     return 1.0 / (1.0 + np.exp(-z))
 
+
 def binary_cross_entropy(y_true, y_prob):
+    """
+    Binary cross-entropy cho bài toán nhị phân.
+    - Clip y_prob để tránh log(0)
+    """
     eps = 1e-15
     y_prob = np.clip(y_prob, eps, 1 - eps)
     return -np.mean(y_true * np.log(y_prob) + (1 - y_true) * np.log(1 - y_prob))
 
+
 def roc_auc_score(y_true, y_prob):
+    """
+    Tự cài AUC (ROC-AUC) theo U-statistic:
+    - Sort theo y_prob
+    - Tính tổng rank của positive
+    - Chuyển về AUC
+    """
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
 
@@ -30,19 +48,33 @@ def roc_auc_score(y_true, y_prob):
     auc = U / (n_pos * n_neg)
     return float(auc)
 
+
 def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
+    """
+    Đọc CSV đơn giản:
+    - Trả về header (list) và data (np.ndarray[str])
+    """
     with open(path, "r", encoding=encoding) as f:
         lines = f.read().strip().split("\n")
+
     if has_header:
         header = lines[0].split(delimiter)
         rows = lines[1:]
     else:
         header = None
         rows = lines
+
     data = [row.split(delimiter) for row in rows]
     return header, np.array(data, dtype=str)
 
+
 def load_xy_from_clean_csv(csv_path, target_col="target"):
+    """
+    Đọc file CSV đã clean:
+    - target_col là cột nhãn
+    - X, y đều là float
+    - kèm theo danh sách tên feature
+    """
     header, data_str = load_csv_as_str(csv_path)
     if target_col not in header:
         raise ValueError(f"Không thấy cột target '{target_col}'.")
@@ -58,7 +90,12 @@ def load_xy_from_clean_csv(csv_path, target_col="target"):
     feat_names = [header[i] for i in feat_idx]
     return X, y, feat_names
 
+
 def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=42):
+    """
+    Chia train/val đơn giản.
+    - Có shuffle bằng RNG của NumPy.
+    """
     X = np.asarray(X)
     y = np.asarray(y)
     n = X.shape[0]
@@ -71,8 +108,14 @@ def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=42):
     train_idx = idx[n_val:]
     return X[train_idx], X[val_idx], y[train_idx], y[val_idx]
 
+
 def train_val_test_split(X, y, val_ratio=0.2, test_ratio=0.2,
                          shuffle=True, random_state=42):
+    """
+    Chia train/val/test:
+    - Đầu tiên tách test
+    - Phần còn lại chia train/val theo tỉ lệ mong muốn
+    """
     X = np.asarray(X)
     y = np.asarray(y)
     n = X.shape[0]
@@ -81,23 +124,36 @@ def train_val_test_split(X, y, val_ratio=0.2, test_ratio=0.2,
     if shuffle:
         rng = np.random.default_rng(random_state)
         rng.shuffle(idx)
+
     test_idx = idx[:n_test]
     remain = idx[n_test:]
     n_remain = remain.shape[0]
     n_val = int(n_remain * val_ratio / (1.0 - test_ratio))
+
     val_idx = remain[:n_val]
     train_idx = remain[n_val:]
+
     return (
         X[train_idx], X[val_idx], X[test_idx],
         y[train_idx], y[val_idx], y[test_idx],
     )
 
+
 def accuracy_score(y_true, y_pred):
+    """
+    Độ chính xác: số mẫu dự đoán đúng / tổng số mẫu.
+    """
     y_true = np.asarray(y_true).reshape(-1)
     y_pred = np.asarray(y_pred).reshape(-1)
     return np.mean(y_true == y_pred)
 
+
 def confusion_matrix_binary(y_true, y_pred, positive_label=1):
+    """
+    Confusion matrix 2x2 cho bài toán nhị phân:
+    [[TN, FP],
+     [FN, TP]]
+    """
     y_true = np.asarray(y_true).astype(int)
     y_pred = np.asarray(y_pred).astype(int)
     pos = positive_label
@@ -109,7 +165,12 @@ def confusion_matrix_binary(y_true, y_pred, positive_label=1):
     return np.array([[TN, FP],
                      [FN, TP]], dtype=int)
 
+
 def precision_recall_f1(y_true, y_pred, positive_label=1):
+    """
+    Tính precision, recall, F1 từ confusion matrix.
+    - Có bảo vệ chia cho 0.
+    """
     cm = confusion_matrix_binary(y_true, y_pred, positive_label)
     TN, FP, FN, TP = cm.ravel()
     precision = 0.0 if (TP + FP) == 0 else TP / (TP + FP)
@@ -117,7 +178,11 @@ def precision_recall_f1(y_true, y_pred, positive_label=1):
     f1 = 0.0 if (precision + recall) == 0 else 2 * precision * recall / (precision + recall)
     return precision, recall, f1
 
+
 def evaluate_binary_classification(y_true, y_prob, threshold=0.5):
+    """
+    Gói chung: từ y_true + y_prob → y_pred, tính accuracy, precision, recall, F1, CM.
+    """
     y_true = np.asarray(y_true).reshape(-1)
     y_prob = np.asarray(y_prob).reshape(-1)
     y_pred = (y_prob >= threshold).astype(int)
@@ -133,7 +198,12 @@ def evaluate_binary_classification(y_true, y_prob, threshold=0.5):
         "threshold": threshold,
     }
 
+
 def find_best_threshold(y_true, y_prob, n_points=200):
+    """
+    Quét nhiều threshold trong [0,1], chọn threshold có F1 cao nhất.
+    - Loop trên số lượng threshold (ít), bên trong vẫn vector hóa.
+    """
     y_true = np.asarray(y_true).reshape(-1)
     y_prob = np.asarray(y_prob).reshape(-1)
     thresholds = np.linspace(0, 1, n_points)
@@ -147,8 +217,18 @@ def find_best_threshold(y_true, y_prob, n_points=200):
             best_t = t
     return best_t, best_f1
 
-# LOGISTIC REGRESSION
+
+# ==============================
+# LOGISTIC REGRESSION 
 class LogisticRegression:
+    """
+    Cài Logistic Regression từ đầu, hỗ trợ:
+    - L1/L2 regularization
+    - Optimizer: sgd / momentum / adam
+    - Mini-batch
+    - LR decay + early stopping
+    """
+
     def __init__(
         self,
         lr=0.1,
@@ -178,10 +258,16 @@ class LogisticRegression:
         self.val_loss_history = []
 
     def _add_intercept(self, X):
+        """
+        Thêm cột bias (1) vào X.
+        """
         X = np.asarray(X, float)
         return np.hstack([np.ones((X.shape[0], 1)), X])
 
     def _init_optimizer(self, dim):
+        """
+        Khởi tạo các biến động lượng / moment cho optimizer.
+        """
         if self.optimizer == "sgd":
             self.m = None
             self.v = None
@@ -196,6 +282,9 @@ class LogisticRegression:
             raise ValueError("optimizer phải là 'sgd', 'momentum' hoặc 'adam'.")
 
     def _update_weights(self, grad, lr):
+        """
+        Cập nhật W tuỳ theo optimizer lựa chọn.
+        """
         if self.optimizer == "sgd":
             self.W -= lr * grad
         elif self.optimizer == "momentum":
@@ -207,11 +296,16 @@ class LogisticRegression:
             self.t += 1
             self.m = beta1 * self.m + (1 - beta1) * grad
             self.v = beta2 * self.v + (1 - beta2) * (grad * grad)
+            # bias-correction
             m_hat = self.m / (1 - beta1 ** self.t)
             v_hat = self.v / (1 - beta2 ** self.t)
             self.W -= lr * m_hat / (np.sqrt(v_hat) + eps)
 
     def fit(self, X, y, X_val=None, y_val=None):
+        """
+        Train Logistic Regression với gradient descent + optimizer.
+        - Có thể truyền X_val, y_val để theo dõi val_loss + early stopping.
+        """
         rng = np.random.default_rng(self.random_state)
 
         X = np.asarray(X, float)
@@ -220,6 +314,7 @@ class LogisticRegression:
         X_ext = self._add_intercept(X)
         n, d = X_ext.shape
 
+        # Khởi tạo trọng số
         self.W = rng.normal(0, 0.01, size=d)
         self._init_optimizer(d)
 
@@ -231,16 +326,19 @@ class LogisticRegression:
 
         bar = trange(self.n_epochs, desc="LogisticRegression")
         for epoch in bar:
+            # Shuffle dữ liệu mỗi epoch
             idx = rng.permutation(n)
             Xs = X_ext[idx]
             ys = y[idx]
 
+            # Chia batch
             if self.batch_size is None:
                 batches = [(0, n)]
             else:
                 batches = [(i, min(i + self.batch_size, n))
                            for i in range(0, n, self.batch_size)]
 
+            # Duyệt từng batch
             for i, j in batches:
                 xb = Xs[i:j]
                 yb = ys[i:j]
@@ -249,9 +347,10 @@ class LogisticRegression:
                 p = sigmoid(z)
                 err = p - yb
 
-                # dùng np.einsum cho gradient: grad_j = (1/m) * sum_i xb_ij * err_i
+                # grad_j = 1/m * sum_i xb_ij * err_i  (vector hóa bằng np.einsum)
                 grad = np.einsum("ij,i->j", xb, err) / xb.shape[0]
 
+                # Regularization (không áp dụng cho bias)
                 if self.l2 > 0:
                     grad[1:] += self.l2 * self.W[1:]
                 if self.l1 > 0:
@@ -259,13 +358,16 @@ class LogisticRegression:
 
                 self._update_weights(grad, self.lr)
 
+            # LR decay đơn giản
             if self.lr_decay > 0:
                 self.lr *= 1.0 / (1.0 + self.lr_decay * epoch)
 
+            # Loss train
             p_train = sigmoid(X_ext @ self.W)
             train_loss = binary_cross_entropy(y, p_train)
             self.train_loss_history.append(train_loss)
 
+            # Loss val (nếu có)
             val_loss = None
             if X_val is not None and y_val is not None:
                 y_val = np.asarray(y_val, float).reshape(-1)
@@ -281,6 +383,7 @@ class LogisticRegression:
                 }
             )
 
+            # Early stopping dựa trên monitor (train hoặc val)
             if self.early_stopping:
                 if monitor < best_loss - 1e-6:
                     best_loss = monitor
@@ -298,15 +401,26 @@ class LogisticRegression:
                     break
 
     def predict_proba(self, X):
+        """
+        Trả về xác suất P(y=1|x).
+        """
         X_ext = self._add_intercept(X)
         return sigmoid(X_ext @ self.W)
 
     def predict(self, X, threshold=0.5):
+        """
+        Dự đoán nhãn (0/1) từ xác suất.
+        """
         p = self.predict_proba(X)
         return (p >= threshold).astype(int)
 
-# RANDOM FOREST
+
+# ==============================
+# RANDOM FOREST 
 def gini_impurity(y):
+    """
+    Độ đo Gini cho nhãn y.
+    """
     y = np.asarray(y).astype(int)
     if y.size == 0:
         return 0.0
@@ -314,7 +428,12 @@ def gini_impurity(y):
     p = counts / counts.sum()
     return 1.0 - np.sum(p * p)
 
+
 def gini_split(col, y, threshold):
+    """
+    Gini impurity sau khi tách theo threshold.
+    - Dùng cho CART classification.
+    """
     col = np.asarray(col)
     y = np.asarray(y).astype(int)
 
@@ -332,7 +451,14 @@ def gini_split(col, y, threshold):
 
     return (n_left * g_left + n_right * g_right) / n
 
+
 class DecisionTree:
+    """
+    Cây quyết định đơn giản cho phân loại nhị phân:
+    - Dùng Gini
+    - Tìm split tốt nhất bằng duyệt brute-force features × thresholds
+    """
+
     def __init__(self, max_depth=5, min_samples_split=5, random_state=42):
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
@@ -342,19 +468,22 @@ class DecisionTree:
         self.threshold = None
         self.left = None
         self.right = None
-        self.pred = None
+        self.pred = None  # dự đoán leaf (đa số class)
 
     def fit(self, X, y, depth=0):
         X = np.asarray(X, float)
         y = np.asarray(y).astype(int)
 
+        # Nếu không còn mẫu: leaf mặc định là 0
         if y.size == 0:
             self.pred = 0
             return
 
+        # Leaf prediction = class xuất hiện nhiều nhất
         counts = np.bincount(y)
         self.pred = counts.argmax()
 
+        # Điều kiện dừng
         if depth >= self.max_depth:
             return
         if y.size < self.min_samples_split:
@@ -367,6 +496,7 @@ class DecisionTree:
         best_thresh = None
         best_gini = np.inf
 
+        # Duyệt tất cả feature và threshold (CART)
         for f in range(n_features):
             col = X[:, f]
             thresholds = np.unique(col)
@@ -401,6 +531,9 @@ class DecisionTree:
         self.right.fit(X[right_mask], y[right_mask], depth + 1)
 
     def predict_row(self, x):
+        """
+        Dự đoán cho 1 mẫu x bằng cách đi theo nhánh của cây.
+        """
         if self.feature is None:
             return self.pred
         if x[self.feature] <= self.threshold:
@@ -409,10 +542,22 @@ class DecisionTree:
             return self.right.predict_row(x)
 
     def predict(self, X):
+        """
+        Dự đoán class cho nhiều mẫu X (loop theo số mẫu, bắt buộc vì cấu trúc cây).
+        """
         X = np.asarray(X, float)
         return np.array([self.predict_row(row) for row in X], dtype=int)
 
+
 class RandomForest:
+    """
+    Random Forest phân loại nhị phân:
+    - Nhiều cây DecisionTree
+    - Bootstrap sample trên hàng
+    - Subsample feature (max_features)
+    - Trung bình dự đoán (dạng xác suất), majority vote cho nhãn.
+    """
+
     def __init__(
         self,
         n_estimators=50,
@@ -433,6 +578,12 @@ class RandomForest:
         self.val_loss_history = []
 
     def _sample_features(self, n_features, rng):
+        """
+        Chọn subset feature cho 1 cây:
+        - 'sqrt': sqrt(d)
+        - 'all': dùng toàn bộ
+        - int: số lượng cụ thể
+        """
         if self.max_features == "sqrt":
             k = max(1, int(np.sqrt(n_features)))
         elif self.max_features == "all":
@@ -444,6 +595,12 @@ class RandomForest:
         return rng.choice(n_features, size=k, replace=False)
 
     def fit(self, X, y, X_val=None, y_val=None):
+        """
+        Huấn luyện RandomForest:
+        - Mỗi cây lấy bootstrap sample
+        - Mỗi cây chọn subset feature
+        - Theo dõi train_loss / val_loss bằng binary_cross_entropy trên output trung bình.
+        """
         X = np.asarray(X, float)
         y = np.asarray(y).astype(int)
 
@@ -461,13 +618,16 @@ class RandomForest:
 
         bar = trange(self.n_estimators, desc="RandomForest", leave=True)
         for i in bar:
+            # Bootstrap trên hàng
             idx = rng.choice(n_samples, size=n_samples, replace=True)
             Xb = X[idx]
             yb = y[idx]
 
+            # Chọn subset feature
             feats = self._sample_features(n_features, rng)
             self.feature_subsets.append(feats)
 
+            # Train một cây
             tree = DecisionTree(
                 max_depth=self.max_depth,
                 min_samples_split=self.min_samples_split,
@@ -476,7 +636,7 @@ class RandomForest:
             tree.fit(Xb[:, feats], yb)
             self.trees.append(tree)
 
-            # tính p_train: trung bình dự đoán các cây
+            # Tính xác suất train bằng trung bình dự đoán các cây hiện có
             preds_train = np.array([
                 t_.predict(X[:, f_]) for t_, f_ in zip(self.trees, self.feature_subsets)
             ])
@@ -501,6 +661,9 @@ class RandomForest:
             )
 
     def predict(self, X):
+        """
+        Majority vote từ các cây để ra nhãn 0/1.
+        """
         X = np.asarray(X, float)
         if not self.trees:
             raise ValueError("RandomForest chưa được fit.")
@@ -516,14 +679,26 @@ class RandomForest:
         return np.apply_along_axis(majority, 0, preds).astype(int)
 
     def predict_proba(self, X):
+        """
+        Xác suất = trung bình dự đoán (0/1) của tất cả cây.
+        """
         X = np.asarray(X, float)
         preds = np.array([
             tree.predict(X[:, feats]) for tree, feats in zip(self.trees, self.feature_subsets)
         ])
         return preds.mean(axis=0)
 
-# XGBOOST
+
+# ==============================
+# XGBOOST (PHÂN LOẠI NHỊ PHÂN, LOGISTIC LOSS)
 def logistic_grad_hess(y_true, margin):
+    """
+    Gradient & Hessian của logistic loss:
+    - margin = F(x)
+    - p = sigmoid(margin)
+    - grad = p - y
+    - hess = p(1-p)
+    """
     y_true = np.asarray(y_true, float).reshape(-1)
     margin = np.asarray(margin, float).reshape(-1)
     p = sigmoid(margin)
@@ -531,7 +706,14 @@ def logistic_grad_hess(y_true, margin):
     h = p * (1.0 - p)
     return g, h
 
+
 class RegressionTree:
+    """
+    Cây Regression dùng trong XGBoost:
+    - Mỗi leaf lưu giá trị "weight" (step) để cập nhật F(x).
+    - Dùng công thức gain từ G,H (sum grad, hess).
+    """
+
     def __init__(
         self,
         max_depth=3,
@@ -550,18 +732,28 @@ class RegressionTree:
         self.threshold = None
         self.left = None
         self.right = None
-        self.pred = None
+        self.pred = None  # giá trị leaf
 
     def _weight(self, G, H):
+        """
+        Trọng số leaf = -G / (H + lambda) (có epsilon để tránh chia 0).
+        """
         return -G / (H + self.lambda_reg + 1e-12)
 
     def _gain(self, Gl, Hl, Gr, Hr):
+        """
+        Gain cho một split theo công thức XGBoost (bỏ G,H cha vì không cần so sánh tuyệt đối).
+        """
         return 0.5 * (
             (Gl * Gl) / (Hl + self.lambda_reg + 1e-12)
             + (Gr * Gr) / (Hr + self.lambda_reg + 1e-12)
         )
 
     def fit(self, X, g, h, depth=0):
+        """
+        Huấn luyện cây hồi quy:
+        - Dùng G,H để chọn split tối đa hoá gain.
+        """
         X = np.asarray(X, float)
         g = np.asarray(g, float).reshape(-1)
         h = np.asarray(h, float).reshape(-1)
@@ -570,6 +762,7 @@ class RegressionTree:
         H = h.sum()
         self.pred = self._weight(G, H)
 
+        # Điều kiện dừng
         if depth >= self.max_depth or X.shape[0] <= 1:
             return
 
@@ -578,6 +771,7 @@ class RegressionTree:
         best_feat = None
         best_thresh = None
 
+        # Duyệt brute-force từng feature & threshold
         for f in range(n_features):
             col = X[:, f]
             thresholds = np.unique(col)
@@ -593,6 +787,7 @@ class RegressionTree:
                 Gr = g[right].sum()
                 Hr = h[right].sum()
 
+                # Không chia tiếp nếu child quá "nhẹ"
                 if Hl < self.min_child_weight or Hr < self.min_child_weight:
                     continue
 
@@ -602,6 +797,7 @@ class RegressionTree:
                     best_feat = f
                     best_thresh = th
 
+        # Nếu không có split nào tốt hơn min_gain_to_split → leaf
         if best_feat is None or best_gain < self.min_gain_to_split:
             return
 
@@ -630,6 +826,9 @@ class RegressionTree:
         self.right.fit(X[right], g[right], h[right], depth + 1)
 
     def predict_row(self, x):
+        """
+        Dự đoán margin cho một mẫu x (đi theo cây đến leaf).
+        """
         if self.feature is None:
             return self.pred
         if x[self.feature] <= self.threshold:
@@ -638,10 +837,21 @@ class RegressionTree:
             return self.right.predict_row(x)
 
     def predict(self, X):
+        """
+        Dự đoán margin cho nhiều mẫu X.
+        """
         X = np.asarray(X, float)
         return np.array([self.predict_row(row) for row in X], dtype=float)
 
+
 class XGBoost:
+    """
+    Cài đặt XGBoost đơn giản cho bài toán nhị phân (logistic loss):
+    - Huấn luyện nhiều RegressionTree tuần tự
+    - F(t+1) = F(t) + lr * tree_t(x)
+    - Có subsample hàng, colsample_by_tree, early stopping.
+    """
+
     def __init__(
         self,
         n_rounds=50,
@@ -674,6 +884,15 @@ class XGBoost:
         self.val_loss_history = []
 
     def fit(self, X, y, X_val=None, y_val=None):
+        """
+        Huấn luyện XGBoost:
+        - Xây dần F(x) qua nhiều round.
+        - Mỗi round:
+          + Tính grad/hess
+          + Subsample hàng & cột
+          + Train RegressionTree
+          + Cập nhật F, tính loss, kiểm tra early stopping.
+        """
         X = np.asarray(X, float)
         y = np.asarray(y, float).reshape(-1)
         n_samples, n_features = X.shape
@@ -683,6 +902,7 @@ class XGBoost:
         self.train_loss_history = []
         self.val_loss_history = []
 
+        # F(x) ban đầu = 0
         F = np.zeros(n_samples, float)
 
         if X_val is not None and y_val is not None:
@@ -698,14 +918,17 @@ class XGBoost:
 
         bar = trange(self.n_rounds, desc="XGBoost")
         for t in bar:
+            # Gradient + Hessian logistic
             g, h = logistic_grad_hess(y, F)
 
+            # Subsample hàng
             if self.subsample < 1.0:
                 m = max(1, int(self.subsample * n_samples))
                 idx_row = rng.choice(n_samples, size=m, replace=False)
             else:
                 idx_row = np.arange(n_samples)
 
+            # Subsample cột
             if self.colsample_bytree < 1.0:
                 k = max(1, int(self.colsample_bytree * n_features))
                 idx_col = rng.choice(n_features, size=k, replace=False)
@@ -716,6 +939,7 @@ class XGBoost:
             g_sub = g[idx_row]
             h_sub = h[idx_row]
 
+            # Train một RegressionTree trên (X_sub, g_sub, h_sub)
             tree = RegressionTree(
                 max_depth=self.max_depth,
                 lambda_reg=self.lambda_reg,
@@ -728,6 +952,7 @@ class XGBoost:
             self.trees.append(tree)
             self.feature_subsets.append(idx_col)
 
+            # Cập nhật F(x) trên toàn bộ X
             F += self.learning_rate * tree.predict(X[:, idx_col])
 
             p_train = sigmoid(F)
@@ -749,6 +974,7 @@ class XGBoost:
                 }
             )
 
+            # Early stopping dựa trên val_loss (nếu có)
             if self.early_stopping:
                 if monitor < best_loss - 1e-6:
                     best_loss = monitor
@@ -768,6 +994,9 @@ class XGBoost:
                     break
 
     def _predict_margin(self, X):
+        """
+        Trả về margin F(x) = sum_t lr * f_t(x).
+        """
         X = np.asarray(X, float)
         n_samples = X.shape[0]
         F = np.zeros(n_samples, float)
@@ -776,9 +1005,15 @@ class XGBoost:
         return F
 
     def predict_proba(self, X):
+        """
+        Xác suất = sigmoid(F(x)).
+        """
         F = self._predict_margin(X)
         return sigmoid(F)
 
     def predict(self, X, threshold=0.5):
+        """
+        Dự đoán nhãn 0/1 từ xác suất.
+        """
         p = self.predict_proba(X)
         return (p >= threshold).astype(int)
