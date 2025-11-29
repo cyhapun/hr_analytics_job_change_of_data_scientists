@@ -11,7 +11,6 @@ def sigmoid(z):
     z = np.clip(z, -500, 500)
     return 1.0 / (1.0 + np.exp(-z))
 
-
 def binary_cross_entropy(y_true, y_prob):
     """
     Binary cross-entropy cho bài toán nhị phân.
@@ -20,7 +19,6 @@ def binary_cross_entropy(y_true, y_prob):
     eps = 1e-15
     y_prob = np.clip(y_prob, eps, 1 - eps)
     return -np.mean(y_true * np.log(y_prob) + (1 - y_true) * np.log(1 - y_prob))
-
 
 def roc_auc_score(y_true, y_prob):
     """
@@ -48,7 +46,6 @@ def roc_auc_score(y_true, y_prob):
     auc = U / (n_pos * n_neg)
     return float(auc)
 
-
 def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
     """
     Đọc CSV đơn giản:
@@ -66,7 +63,6 @@ def load_csv_as_str(path, delimiter=",", has_header=True, encoding="utf-8"):
 
     data = [row.split(delimiter) for row in rows]
     return header, np.array(data, dtype=str)
-
 
 def load_xy_from_clean_csv(csv_path, target_col="target"):
     """
@@ -90,7 +86,6 @@ def load_xy_from_clean_csv(csv_path, target_col="target"):
     feat_names = [header[i] for i in feat_idx]
     return X, y, feat_names
 
-
 def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=42):
     """
     Chia train/val đơn giản.
@@ -107,7 +102,6 @@ def train_val_split(X, y, val_ratio=0.2, shuffle=True, random_state=42):
     val_idx = idx[:n_val]
     train_idx = idx[n_val:]
     return X[train_idx], X[val_idx], y[train_idx], y[val_idx]
-
 
 def train_val_test_split(X, y, val_ratio=0.2, test_ratio=0.2,
                          shuffle=True, random_state=42):
@@ -138,7 +132,6 @@ def train_val_test_split(X, y, val_ratio=0.2, test_ratio=0.2,
         y[train_idx], y[val_idx], y[test_idx],
     )
 
-
 def accuracy_score(y_true, y_pred):
     """
     Độ chính xác: số mẫu dự đoán đúng / tổng số mẫu.
@@ -146,7 +139,6 @@ def accuracy_score(y_true, y_pred):
     y_true = np.asarray(y_true).reshape(-1)
     y_pred = np.asarray(y_pred).reshape(-1)
     return np.mean(y_true == y_pred)
-
 
 def confusion_matrix_binary(y_true, y_pred, positive_label=1):
     """
@@ -165,7 +157,6 @@ def confusion_matrix_binary(y_true, y_pred, positive_label=1):
     return np.array([[TN, FP],
                      [FN, TP]], dtype=int)
 
-
 def precision_recall_f1(y_true, y_pred, positive_label=1):
     """
     Tính precision, recall, F1 từ confusion matrix.
@@ -177,7 +168,6 @@ def precision_recall_f1(y_true, y_pred, positive_label=1):
     recall = 0.0 if (TP + FN) == 0 else TP / (TP + FN)
     f1 = 0.0 if (precision + recall) == 0 else 2 * precision * recall / (precision + recall)
     return precision, recall, f1
-
 
 def evaluate_binary_classification(y_true, y_prob, threshold=0.5):
     """
@@ -197,7 +187,6 @@ def evaluate_binary_classification(y_true, y_prob, threshold=0.5):
         "confusion_matrix": cm,
         "threshold": threshold,
     }
-
 
 def find_best_threshold(y_true, y_prob, n_points=200):
     """
@@ -428,7 +417,6 @@ def gini_impurity(y):
     p = counts / counts.sum()
     return 1.0 - np.sum(p * p)
 
-
 def gini_split(col, y, threshold):
     """
     Gini impurity sau khi tách theo threshold.
@@ -450,7 +438,6 @@ def gini_split(col, y, threshold):
     g_right = gini_impurity(y[right])
 
     return (n_left * g_left + n_right * g_right) / n
-
 
 class DecisionTree:
     """
@@ -547,7 +534,6 @@ class DecisionTree:
         """
         X = np.asarray(X, float)
         return np.array([self.predict_row(row) for row in X], dtype=int)
-
 
 class RandomForest:
     """
@@ -690,7 +676,7 @@ class RandomForest:
 
 
 # ==============================
-# XGBOOST (PHÂN LOẠI NHỊ PHÂN, LOGISTIC LOSS)
+# XGBOOST 
 def logistic_grad_hess(y_true, margin):
     """
     Gradient & Hessian của logistic loss:
@@ -705,7 +691,6 @@ def logistic_grad_hess(y_true, margin):
     g = p - y_true
     h = p * (1.0 - p)
     return g, h
-
 
 class RegressionTree:
     """
@@ -842,7 +827,6 @@ class RegressionTree:
         """
         X = np.asarray(X, float)
         return np.array([self.predict_row(row) for row in X], dtype=float)
-
 
 class XGBoost:
     """
